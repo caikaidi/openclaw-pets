@@ -44,8 +44,7 @@ export async function submitUtterance(
   const actionText = options.actionText?.trim() || route.text.trim();
   if (!actionText) throw new Error("The configured route removed the entire utterance");
 
-  const needsConfirmation = route.route === "confirm"
-    || (route.route === "agent" && options.requestedRoute !== "agent");
+  const needsConfirmation = route.route === "confirm";
   if (needsConfirmation) return { kind: "confirm", text: actionText, transcript: text };
 
   const agentId = route.route === "agent" ? route.targetAgentId ?? "main" : undefined;

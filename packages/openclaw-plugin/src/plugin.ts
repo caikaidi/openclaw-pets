@@ -232,7 +232,10 @@ export function registerOpenClawPets(
       return;
     }
     try {
-      respond(true, await journal.append(observation));
+      const appendable = { ...observation };
+      delete appendable.editedAt;
+      delete appendable.revision;
+      respond(true, await journal.append(appendable));
     } catch (cause) {
       api.logger.error(`openclaw-pets: failed to append activity: ${cause instanceof Error ? cause.message : String(cause)}`);
       respond(false, undefined, error("UNAVAILABLE", "activity storage is unavailable"));

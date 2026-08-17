@@ -3,8 +3,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::ffi::CString;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -21,6 +25,13 @@ const PETDEX_ATLAS_WIDTH: u32 = 1536;
 const PETDEX_V1_HEIGHT: u32 = 1872;
 const PETDEX_V2_HEIGHT: u32 = 2288;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PetPackSource {
+    Openclaw,
+    Petdex,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetPackSummary {
@@ -29,11 +40,11 @@ pub struct PetPackSummary {
     pub name: String,
     pub license: String,
     pub active: bool,
-    pub source: String,
+    pub source: PetPackSource,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PetdexManifest {
     id: String,
     display_name: String,
@@ -54,7 +65,7 @@ struct InstalledManifest {
 
 #[derive(Deserialize, Serialize)]
 struct InstallMetadata {
-    source: String,
+    source: PetPackSource,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -108,12 +119,70 @@ fn insert_source_file(
     Ok(())
 }
 
-fn read_directory_source(root: &Path) -> Result<HashMap<String, Vec<u8>>, String> {
-    let metadata =
-        fs::symlink_metadata(root).map_err(|_| "Pet import source is unavailable".to_string())?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("Pet import source is not a safe directory".into());
+fn open_directory_nofollow(path: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| "Pet import source is not a safe directory".to_string())
+}
+
+fn openat_nofollow(parent: &File, name: &std::ffi::OsStr, directory: bool) -> Result<File, String> {
+    let name = CString::new(name.as_bytes())
+        .map_err(|_| "Pet import contains an unsafe path".to_string())?;
+    let flags = libc::O_RDONLY
+        | libc::O_NOFOLLOW
+        | libc::O_CLOEXEC
+        | if directory { libc::O_DIRECTORY } else { 0 };
+    // SAFETY: `parent` owns a live directory descriptor and `name` is a
+    // NUL-free single path component. The returned descriptor is checked
+    // before ownership is transferred to `File`.
+    let descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+    if descriptor < 0 {
+        return Err("Pet import may not contain links or special files".into());
     }
+    // SAFETY: `openat` returned a new owned descriptor and no other `File`
+    // owns it. `File` closes it exactly once.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+fn read_relative_nofollow(root: &File, path: &Path) -> Result<Vec<u8>, String> {
+    let components = path
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => Ok(value),
+            _ => Err("Pet import contains an unsafe path".to_string()),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (file_name, directories) = components
+        .split_last()
+        .ok_or_else(|| "Pet import contains an unsafe path".to_string())?;
+    let mut parent = root
+        .try_clone()
+        .map_err(|_| "Pet import source could not be read".to_string())?;
+    for directory in directories {
+        parent = openat_nofollow(&parent, directory, true)?;
+    }
+    let mut file = openat_nofollow(&parent, file_name, false)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Pet import file metadata is unavailable".to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return Err("Pet import may not contain links or special files".into());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.by_ref()
+        .take(MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Pet import file could not be read".to_string())?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err("Pet import exceeds the file limits".into());
+    }
+    Ok(bytes)
+}
+
+fn read_directory_source(root: &Path) -> Result<HashMap<String, Vec<u8>>, String> {
+    let root_handle = open_directory_nofollow(root)?;
     let mut files = HashMap::new();
     let mut total = 0_u64;
     for entry in WalkDir::new(root).follow_links(false) {
@@ -133,14 +202,7 @@ fn read_directory_source(root: &Path) -> Result<HashMap<String, Vec<u8>>, String
             .strip_prefix(root)
             .map_err(|_| "Pet import path is invalid".to_string())?;
         let name = safe_relative_path(relative)?;
-        let metadata = entry
-            .metadata()
-            .map_err(|_| "Pet import file metadata is unavailable".to_string())?;
-        if metadata.len() > MAX_FILE_BYTES {
-            return Err("Pet import exceeds the file limits".into());
-        }
-        let bytes =
-            fs::read(entry.path()).map_err(|_| "Pet import file could not be read".to_string())?;
+        let bytes = read_relative_nofollow(&root_handle, relative)?;
         insert_source_file(&mut files, name, bytes, &mut total)?;
     }
     Ok(files)
@@ -300,6 +362,14 @@ fn convert_petdex(files: &HashMap<String, Vec<u8>>) -> Result<(String, Vec<u8>),
         .get(&sprite_name)
         .ok_or_else(|| "Petdex spritesheet is missing".to_string())?
         .clone();
+    if files.keys().any(|name| {
+        name != "pet.json"
+            && name != &sprite_name
+            && name != "LICENSE.txt"
+            && name != "ATTRIBUTION.txt"
+    }) {
+        return Err("Petdex import contains an unsupported file".into());
+    }
     let extension = sprite_path
         .extension()
         .and_then(|value| value.to_str())
@@ -357,7 +427,7 @@ fn convert_petdex(files: &HashMap<String, Vec<u8>>) -> Result<(String, Vec<u8>),
 fn stage_package(
     app_data: &Path,
     files: HashMap<String, Vec<u8>>,
-) -> Result<(PathBuf, String), String> {
+) -> Result<(PathBuf, PetPackSource), String> {
     let packs = packs_root(app_data);
     fs::create_dir_all(&packs).map_err(|_| "Pet Pack storage is unavailable".to_string())?;
     let staging = packs.join(format!(".staging-{:016x}", rand::random::<u64>()));
@@ -366,7 +436,7 @@ fn stage_package(
     let result = (|| {
         let source;
         if files.contains_key("pet.json") {
-            source = "petdex";
+            source = PetPackSource::Petdex;
             let (manifest, sprite) = convert_petdex(&files)?;
             let parsed: serde_json::Value = serde_json::from_str(&manifest)
                 .map_err(|_| "Converted Pet Pack manifest is invalid".to_string())?;
@@ -379,8 +449,25 @@ fn stage_package(
                 .map_err(|_| "Pet Pack manifest could not be staged".to_string())?;
             fs::write(staging.join(asset_path), sprite)
                 .map_err(|_| "Pet Pack spritesheet could not be staged".to_string())?;
+            fs::create_dir_all(staging.join("attribution"))
+                .map_err(|_| "Pet Pack attribution could not be staged".to_string())?;
+            fs::write(
+                staging.join("attribution/petdex.json"),
+                files
+                    .get("pet.json")
+                    .ok_or_else(|| "Petdex attribution is missing".to_string())?,
+            )
+            .map_err(|_| "Pet Pack attribution could not be staged".to_string())?;
+            if let Some(license) = files.get("LICENSE.txt") {
+                fs::write(staging.join("LICENSE.txt"), license)
+                    .map_err(|_| "Pet Pack license could not be staged".to_string())?;
+            }
+            if let Some(attribution) = files.get("ATTRIBUTION.txt") {
+                fs::write(staging.join("ATTRIBUTION.txt"), attribution)
+                    .map_err(|_| "Pet Pack attribution could not be staged".to_string())?;
+            }
         } else {
-            source = "openclaw";
+            source = PetPackSource::Openclaw;
             let manifest = files
                 .get("manifest.json")
                 .ok_or_else(|| "Pet Pack import is missing manifest.json".to_string())?;
@@ -390,7 +477,12 @@ fn stage_package(
             fs::write(staging.join("manifest.json"), manifest)
                 .map_err(|_| "Pet Pack manifest could not be staged".to_string())?;
             for (name, bytes) in &files {
-                if name == "manifest.json" || name == "LICENSE.txt" {
+                if name == "manifest.json" {
+                    continue;
+                }
+                if name == "LICENSE.txt" || name == "ATTRIBUTION.txt" {
+                    fs::write(staging.join(name), bytes)
+                        .map_err(|_| "Pet Pack attribution could not be staged".to_string())?;
                     continue;
                 }
                 if !name.starts_with("assets/") {
@@ -409,14 +501,12 @@ fn stage_package(
         }
         fs::write(
             staging.join("install.json"),
-            serde_json::to_vec(&InstallMetadata {
-                source: source.into(),
-            })
-            .map_err(|_| "Pet Pack install metadata is invalid".to_string())?,
+            serde_json::to_vec(&InstallMetadata { source })
+                .map_err(|_| "Pet Pack install metadata is invalid".to_string())?,
         )
         .map_err(|_| "Pet Pack install metadata could not be staged".to_string())?;
         read_pet_pack_root(&staging)?;
-        Ok(source.to_string())
+        Ok(source)
     })();
     match result {
         Ok(source) => Ok((staging, source)),
@@ -438,7 +528,7 @@ fn summary(root: &Path, key: String, active_key: Option<&str>) -> Result<PetPack
         .ok()
         .and_then(|bytes| serde_json::from_slice::<InstallMetadata>(&bytes).ok())
         .map(|metadata| metadata.source)
-        .unwrap_or_else(|| "openclaw".into());
+        .unwrap_or(PetPackSource::Openclaw);
     Ok(PetPackSummary {
         active: active_key == Some(key.as_str()),
         key,
@@ -483,13 +573,17 @@ pub fn import_source(app_data: &Path, source: &Path) -> Result<PetPackSummary, S
     let installed_manifest: InstalledManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|_| "Pet Pack manifest is invalid".to_string())?;
     let mut digest = Sha256::new();
-    digest.update(&manifest_bytes);
-    for entry in WalkDir::new(staging.join("assets")).sort_by_file_name() {
-        let entry = entry.map_err(|_| "Pet Pack assets could not be hashed".to_string())?;
+    for entry in WalkDir::new(&staging).sort_by_file_name() {
+        let entry = entry.map_err(|_| "Pet Pack files could not be hashed".to_string())?;
         if entry.file_type().is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(&staging)
+                .map_err(|_| "Pet Pack file path is invalid".to_string())?;
+            digest.update(relative.as_os_str().as_bytes());
             digest.update(
                 fs::read(entry.path())
-                    .map_err(|_| "Pet Pack asset could not be hashed".to_string())?,
+                    .map_err(|_| "Pet Pack file could not be hashed".to_string())?,
             );
         }
     }
@@ -617,6 +711,7 @@ mod tests {
             .write_to(&mut bytes, ImageFormat::WebP)
             .expect("webp fixture");
         fs::write(root.join("spritesheet.webp"), bytes.into_inner()).expect("spritesheet");
+        fs::write(root.join("LICENSE.txt"), "Sample attribution only").expect("license");
     }
 
     #[test]
@@ -628,11 +723,15 @@ mod tests {
         let imported = import_source(app_data.path(), source.path()).expect("import");
         assert_eq!(imported.id, "local.petdex.sample-fox");
         assert_eq!(imported.license, "NOASSERTION");
+        assert_eq!(imported.source, PetPackSource::Petdex);
         assert!(!imported.active);
         assert!(active_managed_root(app_data.path())
             .expect("active root")
             .is_none());
         assert_eq!(list_installed(app_data.path()).expect("installed").len(), 1);
+        let installed = installed_root(app_data.path(), &imported.key).expect("installed root");
+        assert!(installed.join("LICENSE.txt").is_file());
+        assert!(installed.join("attribution/petdex.json").is_file());
     }
 
     #[test]
@@ -659,7 +758,7 @@ mod tests {
 
         let imported = import_source(app_data.path(), source.path()).expect("import ZIP");
         assert_eq!(imported.id, "local.petdex.sample-fox");
-        assert_eq!(imported.source, "petdex");
+        assert_eq!(imported.source, PetPackSource::Petdex);
         assert!(!imported.active);
         assert!(active_managed_root(app_data.path())
             .expect("active root")
@@ -701,6 +800,31 @@ mod tests {
         let error =
             import_source(app_data.path(), source.path()).expect_err("unsafe ZIP must fail");
         assert!(error.contains("unsafe path"));
+        assert!(list_installed(app_data.path())
+            .expect("installed")
+            .is_empty());
+    }
+
+    #[test]
+    fn rejects_petdex_executable_content_and_unknown_manifest_fields() {
+        let app_data = tempfile::tempdir().expect("app data");
+        let scripted = tempfile::tempdir().expect("scripted source");
+        write_petdex_source(scripted.path());
+        fs::write(scripted.path().join("script.js"), "alert(1)").expect("script");
+        let error = import_source(app_data.path(), scripted.path())
+            .expect_err("executable content must fail closed");
+        assert!(error.contains("unsupported file"));
+
+        let external = tempfile::tempdir().expect("external source");
+        write_petdex_source(external.path());
+        fs::write(
+            external.path().join("pet.json"),
+            r#"{"id":"sample-fox","displayName":"Sample Fox","spritesheetPath":"spritesheet.webp","externalUrl":"https://example.test/script.js"}"#,
+        )
+        .expect("manifest");
+        let error = import_source(app_data.path(), external.path())
+            .expect_err("unknown external fields must fail closed");
+        assert!(error.contains("pet.json is invalid"));
         assert!(list_installed(app_data.path())
             .expect("installed")
             .is_empty());

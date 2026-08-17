@@ -228,6 +228,32 @@ describe("OpenClaw Pets plugin", () => {
     });
   });
 
+  it("does not let a companion forge Provider-owned edit metadata", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
+    const { methods } = createApi(directory);
+    await request(methods, "pets.activity.append", { observation: {
+      id: "client-metadata-forgery",
+      occurredAt: "2026-08-16T12:00:00.000Z",
+      source: "desktop_voice",
+      text: "Original entry",
+      editedAt: "2020-01-01T00:00:00.000Z",
+      revision: "client-selected-revision",
+    } });
+
+    expect(await request(methods, "pets.activity.list", { limit: 10 })).toMatchObject({
+      ok: true,
+      payload: {
+        observations: [{
+          id: "client-metadata-forgery",
+          revision: expect.not.stringMatching("client-selected-revision"),
+        }],
+      },
+    });
+    const listed = await request(methods, "pets.activity.list", { limit: 10 });
+    expect((listed?.payload as { observations: Array<{ editedAt?: string }> }).observations[0])
+      .not.toHaveProperty("editedAt");
+  });
+
   it("rejects unknown or instruction-shaped activity fields", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
     const { methods } = createApi(directory);

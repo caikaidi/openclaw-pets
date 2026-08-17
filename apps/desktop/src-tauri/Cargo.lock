@@ -2532,6 +2532,7 @@ dependencies = [
  "ed25519-dalek",
  "image",
  "keyring",
+ "libc",
  "rand",
  "serde",
  "serde_json",

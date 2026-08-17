@@ -71,10 +71,10 @@ describe("desktop utterance routing", () => {
     });
   });
 
-  it("does not create an agent session before the user confirms the routed task", async () => {
+  it("does not create an agent session before the user confirms a classified task candidate", async () => {
     const request = vi.fn(async (method: string) => {
       if (method === "pets.utterance.route") {
-        return { route: "agent", text: "Summarize the test", targetAgentId: "main" };
+        return { route: "confirm", text: "Summarize the test" };
       }
       if (method === "pets.activity.append") return { inserted: true };
       throw new Error(`unexpected ${method}`);
@@ -92,6 +92,36 @@ describe("desktop utterance routing", () => {
       transcript: "ask: Summarize the test",
     });
     expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("treats an explicit agent prefix as the user's execution choice", async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === "pets.utterance.route") {
+        return {
+          route: "agent",
+          text: "Summarize the test",
+          matchedPrefix: "ask:",
+          targetAgentId: "main",
+        };
+      }
+      if (method === "pets.activity.append") return { inserted: true };
+      if (method === "sessions.create") {
+        return { ok: true, key: "agent:main:pets:task-explicit-prefix" };
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+
+    await expect(submitUtterance(request, {
+      text: "ask: Summarize the test",
+      interactionId: "task-explicit-prefix",
+      asrProvider: "bailian-token-plan",
+    })).resolves.toMatchObject({
+      kind: "agent",
+      sessionKey: "agent:main:pets:task-explicit-prefix",
+    });
+    expect(request).toHaveBeenLastCalledWith("sessions.create", expect.objectContaining({
+      message: "Summarize the test",
+    }));
   });
 
   it("always derives agent sessions from the pet interaction id", async () => {
@@ -145,8 +175,11 @@ describe("desktop utterance routing", () => {
   });
 
   it("stores exactly one original transcript after a confirmed route", async () => {
-    const request = vi.fn(async (method: string) => {
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === "pets.utterance.route") {
+        if (params?.requestedRoute !== "agent") {
+          return { route: "confirm", text: "Summarize the test" };
+        }
         return { route: "agent", text: "Summarize the test", targetAgentId: "main" };
       }
       if (method === "pets.activity.append") return { inserted: true };

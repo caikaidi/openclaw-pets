@@ -8,7 +8,12 @@ import type {
   TranscriptionResult,
   UtteranceRoute,
 } from "@openclaw-pets/protocol";
-import { PETS_EVENT, PETS_RPC, isPetSemanticState } from "@openclaw-pets/protocol";
+import {
+  PETS_EVENT,
+  PETS_RPC,
+  PET_SEMANTIC_STATES,
+  isPetSemanticState,
+} from "@openclaw-pets/protocol";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import PetCanvas from "./components/PetCanvas.vue";
 import SpritePet from "./components/SpritePet.vue";
@@ -63,6 +68,19 @@ const stateLabels: Record<PetSemanticState, string> = {
   failed: "遇到问题了",
 };
 
+const previewStateLabels: Record<PetSemanticState, string> = {
+  offline: "离线",
+  idle: "待机",
+  listening: "聆听",
+  transcribing: "转写",
+  thinking: "思考",
+  working: "执行",
+  needs_input: "确认",
+  speaking: "播报",
+  succeeded: "成功",
+  failed: "失败",
+};
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -102,6 +120,7 @@ const transientMessage = ref("");
 const activePetPack = ref<LoadedPetPack>();
 const previewPetPack = ref<LoadedPetPack>();
 const previewPetPackKey = ref<string>();
+const previewPetState = ref<PetSemanticState>("idle");
 const installedPetPacks = ref<PetPackSummary[]>([]);
 const petPackBusy = ref(false);
 let transientTimer: number | undefined;
@@ -145,6 +164,7 @@ let gateway: PetsGatewayClient | undefined;
 const recorder = new BatchRecorder();
 const petPackManager = new PetPackManager();
 const renderedPetPack = computed(() => previewPetPack.value ?? activePetPack.value);
+const renderedPetState = computed(() => previewPetPack.value ? previewPetState.value : displayState.value);
 
 function showTransient(message: string, duration = 2_800): void {
   transientMessage.value = message;
@@ -254,6 +274,7 @@ async function importPetPack(kind: "zip" | "directory"): Promise<void> {
     if (!imported) return;
     previewPetPack.value = imported.preview;
     previewPetPackKey.value = imported.summary.key;
+    previewPetState.value = "idle";
     await refreshInstalledPetPacks();
     showTransient(`正在预览 ${imported.summary.name}，确认后再启用`);
   } catch (cause) {
@@ -269,6 +290,7 @@ async function previewInstalledPetPack(pack: PetPackSummary): Promise<void> {
   try {
     previewPetPack.value = await petPackManager.preview(pack.key);
     previewPetPackKey.value = pack.key;
+    previewPetState.value = "idle";
     showTransient(`正在预览 ${pack.name}`);
   } catch (cause) {
     showTransient(readableError(cause), 5_000);
@@ -284,6 +306,7 @@ async function activateInstalledPetPack(pack: PetPackSummary): Promise<void> {
     activePetPack.value = await petPackManager.activate(pack.key);
     previewPetPack.value = undefined;
     previewPetPackKey.value = undefined;
+    previewPetState.value = "idle";
     await refreshInstalledPetPacks();
     showTransient(`已启用 ${pack.name}`);
   } catch (cause) {
@@ -301,6 +324,7 @@ async function removeInstalledPetPack(pack: PetPackSummary): Promise<void> {
     if (previewPetPackKey.value === pack.key) {
       previewPetPack.value = undefined;
       previewPetPackKey.value = undefined;
+      previewPetState.value = "idle";
     }
     await refreshInstalledPetPacks();
     showTransient(`已移除 ${pack.name}`);
@@ -315,6 +339,7 @@ function closePanel(): void {
   panel.value = undefined;
   previewPetPack.value = undefined;
   previewPetPackKey.value = undefined;
+  previewPetState.value = "idle";
 }
 
 async function deleteActivity(id: string): Promise<void> {
@@ -643,6 +668,15 @@ onBeforeUnmount(() => {
             <button class="secondary" :disabled="petPackBusy" @click="importPetPack('directory')">导入文件夹</button>
           </div>
           <p class="pet-pack-note">从 codex-pets.net 下载后导入。本地素材不会上传或重新分发。</p>
+          <div v-if="previewPetPack" class="preview-state-picker" aria-label="预览宠物状态">
+            <button
+              v-for="state in PET_SEMANTIC_STATES"
+              :key="state"
+              class="secondary"
+              :class="{ active: previewPetState === state }"
+              @click="previewPetState = state"
+            >{{ previewStateLabels[state] }}</button>
+          </div>
           <div v-if="installedPetPacks.length" class="pet-pack-list">
             <article v-for="pack in installedPetPacks" :key="pack.key" :class="{ previewing: previewPetPackKey === pack.key }">
               <div>
@@ -708,7 +742,7 @@ onBeforeUnmount(() => {
       @pointercancel="onPetPointerUp"
       @contextmenu.prevent="openPanel('activity')"
     >
-      <SpritePet v-if="renderedPetPack" :state="displayState" :pack="renderedPetPack" />
+      <SpritePet v-if="renderedPetPack" :state="renderedPetState" :pack="renderedPetPack" />
       <PetCanvas v-else :state="displayState" />
     </div>
   </main>

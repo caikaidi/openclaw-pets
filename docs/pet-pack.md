@@ -5,6 +5,8 @@ A Pet Pack is a directory of inert local data:
 ```text
 active/
 ├── manifest.json
+├── LICENSE.txt
+├── ATTRIBUTION.txt
 └── assets/
     └── spritesheet.webp
 ```
@@ -90,6 +92,8 @@ alignment.
 ## Allowed data
 
 - Manifest: UTF-8 JSON, at most 64 KiB.
+- Optional licensing and attribution: plain `LICENSE.txt` and
+  `ATTRIBUTION.txt` files at the package root.
 - Assets: local PNG or WebP regular files only.
 - Per-asset limit: 16 MiB.
 - Total assets limit: 32 MiB.

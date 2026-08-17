@@ -13,7 +13,7 @@ export type PetPackSummary = {
   name: string;
   license: string;
   active: boolean;
-  source: "petdex" | "openclaw" | string;
+  source: "petdex" | "openclaw";
 };
 
 export type ImportedPetPack = {

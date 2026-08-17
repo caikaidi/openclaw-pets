@@ -17,6 +17,7 @@ tauri-build = { version = "2.5.4", features = [] }
 base64 = "0.22.1"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
 keyring = { version = "3.6.3", features = ["apple-native"] }
+libc = "0.2.177"
 image = { version = "0.25.9", default-features = false, features = ["png", "webp"] }
 rand = "0.8.5"
 serde = { version = "1.0.228", features = ["derive"] }
