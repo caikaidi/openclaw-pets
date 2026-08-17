@@ -20,6 +20,11 @@ export type PetsPluginConfig = {
     contextPrefixes: string[];
     agentPrefixes: string[];
     targetAgentId?: string;
+    classifier: {
+      enabled: boolean;
+      model?: string;
+      timeoutMs: number;
+    };
   };
   asr: {
     maxAudioBytes: number;
@@ -90,6 +95,7 @@ export function resolveConfig(value: unknown): PetsPluginConfig {
   const config = isRecord(value) ? value : {};
   const context = isRecord(config.contextInjection) ? config.contextInjection : {};
   const routing = isRecord(config.routing) ? config.routing : {};
+  const classifier = isRecord(routing.classifier) ? routing.classifier : {};
   const asr = isRecord(config.asr) ? config.asr : {};
   const journal = isRecord(config.journal) ? config.journal : {};
   const journalHttp = isRecord(journal.http) ? journal.http : {};
@@ -128,6 +134,13 @@ export function resolveConfig(value: unknown): PetsPluginConfig {
       ...(typeof routing.targetAgentId === "string" && routing.targetAgentId.trim()
         ? { targetAgentId: routing.targetAgentId.trim().slice(0, 128) }
         : {}),
+      classifier: {
+        enabled: classifier.enabled !== false,
+        ...(typeof classifier.model === "string" && classifier.model.trim()
+          ? { model: classifier.model.trim().slice(0, 256) }
+          : {}),
+        timeoutMs: boundedInteger(classifier.timeoutMs, 6_000, 500, 30_000),
+      },
     },
     asr: {
       maxAudioBytes: boundedInteger(asr.maxAudioBytes, 10 * 1024 * 1024, 1, 10 * 1024 * 1024),

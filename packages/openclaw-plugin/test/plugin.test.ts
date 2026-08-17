@@ -10,12 +10,16 @@ import { PETS_EVENT, PETS_PLUGIN_ID } from "@openclaw-pets/protocol";
 import type { AsrProvider } from "../src/asr-provider.js";
 import type { JournalProvider } from "../src/journal-provider.js";
 import { registerOpenClawPets, type PetsPluginApi } from "../src/plugin.js";
+import type { UtteranceClassifier } from "../src/utterance-classifier.js";
 
 type GatewayHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
 type PluginService = Parameters<OpenClawPluginApi["registerService"]>[0];
 type MemorySupplement = Parameters<OpenClawPluginApi["registerMemoryCorpusSupplement"]>[0];
 
-function createApi(stateDirectory: string, options: { asr?: AsrProvider; journal?: JournalProvider } = {}) {
+function createApi(
+  stateDirectory: string,
+  options: { asr?: AsrProvider; journal?: JournalProvider; classifier?: UtteranceClassifier } = {},
+) {
   const methods = new Map<string, GatewayHandler>();
   let service: PluginService | undefined;
   let agentEventSubscription: PluginAgentEventSubscriptionRegistration | undefined;
@@ -177,7 +181,7 @@ describe("OpenClaw Pets plugin", () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
     const { methods } = createApi(directory);
     const capabilities = await request(methods, "pets.capabilities");
-    expect(capabilities).toMatchObject({ ok: true, payload: { protocolVersion: 2 } });
+    expect(capabilities).toMatchObject({ ok: true, payload: { protocolVersion: 3 } });
 
     const observation = {
       id: "obs-rpc-1",
@@ -191,8 +195,33 @@ describe("OpenClaw Pets plugin", () => {
     });
     expect(await request(methods, "pets.activity.list", { limit: 10 })).toMatchObject({
       ok: true,
-      payload: { observations: [observation] },
+      payload: { observations: [{ ...observation, revision: expect.any(String) }] },
     });
+    const listed = await request(methods, "pets.activity.list", { limit: 10 });
+    const revision = (listed?.payload as { observations: Array<{ revision: string }> }).observations[0]!.revision;
+    expect(await request(methods, "pets.activity.update", {
+      id: observation.id,
+      text: "Selected the revised DBR packaging route",
+      expectedRevision: revision,
+    })).toMatchObject({
+      ok: true,
+      payload: {
+        status: "updated",
+        observation: {
+          id: observation.id,
+          source: observation.source,
+          occurredAt: observation.occurredAt,
+          text: "Selected the revised DBR packaging route",
+          editedAt: expect.any(String),
+          revision: expect.not.stringMatching(revision),
+        },
+      },
+    });
+    expect(await request(methods, "pets.activity.update", {
+      id: observation.id,
+      text: "Stale overwrite",
+      expectedRevision: revision,
+    })).toMatchObject({ ok: true, payload: { status: "conflict" } });
     expect(await request(methods, "pets.activity.delete", { id: observation.id })).toMatchObject({
       ok: true,
       payload: { deleted: true },
@@ -216,7 +245,14 @@ describe("OpenClaw Pets plugin", () => {
 
   it("resolves configurable voice routes without embedding business logic in the desktop app", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
-    const { methods } = createApi(directory);
+    const classified: string[] = [];
+    const classifier: UtteranceClassifier = {
+      classify: async (text) => {
+        classified.push(text);
+        return text.includes("整理") ? "task_candidate" : "record_only";
+      },
+    };
+    const { methods } = createApi(directory, { classifier });
 
     expect(await request(methods, "pets.utterance.route", { text: "记录一下 完成封装测试" })).toMatchObject({
       ok: true,
@@ -226,10 +262,56 @@ describe("OpenClaw Pets plugin", () => {
       ok: true,
       payload: { route: "agent", text: "整理测试结论", targetAgentId: "main" },
     });
-    expect(await request(methods, "pets.utterance.route", { text: "这句话没有前缀" })).toMatchObject({
+    expect(await request(methods, "pets.utterance.route", { text: "今天完成了封装测试" })).toMatchObject({
+      ok: true,
+      payload: { route: "context" },
+    });
+    expect(await request(methods, "pets.utterance.route", { text: "整理今天的试验数据" })).toMatchObject({
       ok: true,
       payload: { route: "confirm" },
     });
+    expect(classified).toEqual(["今天完成了封装测试", "整理今天的试验数据"]);
+  });
+
+  it("falls back to recording when the classifier is unavailable, invalid, or uncertain", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
+    const outcomes: unknown[] = [undefined, "unknown", new Error("model unavailable")];
+    const classifier = {
+      classify: async () => {
+        const outcome = outcomes.shift();
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+    } as unknown as UtteranceClassifier;
+    const { methods } = createApi(directory, { classifier });
+
+    for (const text of ["普通陈述一", "普通陈述二", "普通陈述三"]) {
+      expect(await request(methods, "pets.utterance.route", { text })).toMatchObject({
+        ok: true,
+        payload: { route: "context", text },
+      });
+    }
+  });
+
+  it("honors an explicit requested route without consulting the classifier", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
+    let classifierCalls = 0;
+    const classifier: UtteranceClassifier = {
+      classify: async () => {
+        classifierCalls += 1;
+        return "task_candidate";
+      },
+    };
+    const { methods } = createApi(directory, { classifier });
+
+    expect(await request(methods, "pets.utterance.route", {
+      text: "直接保存这句话",
+      requestedRoute: "context",
+    })).toMatchObject({
+      ok: true,
+      payload: { route: "context", text: "直接保存这句话" },
+    });
+    expect(classifierCalls).toBe(0);
   });
 
   it("labels every memory result as untrusted activity data", async () => {
@@ -312,6 +394,7 @@ describe("OpenClaw Pets plugin", () => {
     const journal: JournalProvider = {
       kind: "http",
       append: async (observation) => ({ inserted: true, observation }),
+      update: async () => ({ status: "not_found" }),
       retract: async () => true,
       page: async (options) => {
         pageOptions = options;
@@ -341,6 +424,7 @@ describe("OpenClaw Pets plugin", () => {
     const journal: JournalProvider = {
       kind: "http",
       append: unavailable,
+      update: unavailable,
       retract: unavailable,
       page: async () => ({ status: "unavailable", observations: [], gaps: [] }),
       getContext: unavailable,

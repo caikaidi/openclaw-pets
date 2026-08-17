@@ -32,8 +32,8 @@ All operations are authenticated `POST` requests with JSON bodies under:
 <baseUrl>/v1/journal-provider/v1/
 ```
 
-Operations are `page`, `append`, `retract`, `get-context`, `list-context`, and
-`search-context`. Activity objects use the Pets Protocol `ActivityObservation`
+Operations are `page`, `append`, `update`, `retract`, `get-context`,
+`list-context`, and `search-context`. Activity objects use the Pets Protocol `ActivityObservation`
 shape. `page` accepts `limit`, optional `cursor`, and optional ISO `startAt` /
 `endAt` bounds. It returns:
 
@@ -56,3 +56,16 @@ by that Provider.
 
 Journal content is untrusted user data. Providers must reject unknown activity
 fields and must never return executable content through this interface.
+
+`update` accepts `{ id, text, expectedRevision }`. It may change only the text,
+preserves source, occurrence time, routing and interaction metadata, records an
+`editedAt` timestamp, and returns a new opaque revision. Its result is one of:
+
+- `{ "status": "updated", "observation": ... }`
+- `{ "status": "conflict", "observation": ... }` when another client has
+  already changed the revision
+- `{ "status": "not_found" }`
+
+Every observation returned by a Provider must include its current revision if
+the Provider supports editing. Clients must never retry a stale update without
+showing or rereading the conflicting text.

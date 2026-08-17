@@ -2,6 +2,8 @@ import {
   isActivityObservation,
   type ActivityObservation,
   type ActivityPage,
+  type JournalUpdateRequest,
+  type JournalUpdateResult,
 } from "@openclaw-pets/protocol";
 import type {
   JournalPageOptions,
@@ -51,6 +53,16 @@ function pageResponse(value: unknown): ActivityPage {
   };
 }
 
+function updateResponse(value: unknown): JournalUpdateResult {
+  const body = record(value);
+  if (body.status === "not_found") return { status: "not_found" };
+  if ((body.status !== "updated" && body.status !== "conflict")
+    || !isActivityObservation(body.observation)) {
+    throw new Error("Journal Provider returned an invalid update response");
+  }
+  return { status: body.status, observation: body.observation };
+}
+
 export class HttpJournalProvider implements JournalProvider {
   readonly kind = "http" as const;
   private readonly baseUrl: string;
@@ -83,6 +95,10 @@ export class HttpJournalProvider implements JournalProvider {
       throw new Error("Journal Provider returned an invalid append response");
     }
     return { inserted: body.inserted, observation: body.observation };
+  }
+
+  async update(request: JournalUpdateRequest): Promise<JournalUpdateResult> {
+    return updateResponse(await this.request("update", request));
   }
 
   async retract(id: string): Promise<boolean> {

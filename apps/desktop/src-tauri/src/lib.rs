@@ -15,6 +15,8 @@ use std::path::Path;
 use tauri::Manager;
 use walkdir::WalkDir;
 
+mod pet_packs;
+
 const KEYRING_SERVICE: &str = "dev.openclaw.pets";
 const DEVICE_KEY: &str = "device-signing-key-v2";
 const MAX_KEY_LENGTH: usize = 1_024;
@@ -146,17 +148,54 @@ fn secure_delete(key: String) -> Result<(), String> {
 
 #[tauri::command]
 fn read_active_pet_pack(app: tauri::AppHandle) -> Result<Option<PetPackPayload>, String> {
-    let root = app
+    let app_data = app
         .path()
         .app_data_dir()
-        .map_err(|_| "application data directory is unavailable".to_string())?
-        .join("pet-packs")
-        .join("active");
+        .map_err(|_| "application data directory is unavailable".to_string())?;
+    if let Some(root) = pet_packs::active_managed_root(&app_data)? {
+        return read_pet_pack_root(&root).map(Some);
+    }
+    let root = app_data.join("pet-packs").join("active");
     match fs::symlink_metadata(&root) {
         Ok(_) => read_pet_pack_root(&root).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err("Pet Pack root is unavailable".into()),
     }
+}
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|_| "application data directory is unavailable".to_string())
+}
+
+#[tauri::command]
+fn import_pet_pack(
+    app: tauri::AppHandle,
+    source_path: String,
+) -> Result<pet_packs::PetPackSummary, String> {
+    pet_packs::import_source(&app_data_dir(&app)?, Path::new(&source_path))
+}
+
+#[tauri::command]
+fn list_pet_packs(app: tauri::AppHandle) -> Result<Vec<pet_packs::PetPackSummary>, String> {
+    pet_packs::list_installed(&app_data_dir(&app)?)
+}
+
+#[tauri::command]
+fn read_pet_pack(app: tauri::AppHandle, key: String) -> Result<PetPackPayload, String> {
+    let root = pet_packs::installed_root(&app_data_dir(&app)?, &key)?;
+    read_pet_pack_root(&root)
+}
+
+#[tauri::command]
+fn activate_pet_pack(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    pet_packs::activate(&app_data_dir(&app)?, &key)
+}
+
+#[tauri::command]
+fn remove_pet_pack(app: tauri::AppHandle, key: String) -> Result<bool, String> {
+    pet_packs::remove(&app_data_dir(&app)?, &key)
 }
 
 fn read_pet_pack_root(root: &Path) -> Result<PetPackPayload, String> {
@@ -281,6 +320,8 @@ fn read_pet_pack_root(root: &Path) -> Result<PetPackPayload, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             device_identity,
             sign_device_payload,
@@ -288,6 +329,11 @@ pub fn run() {
             secure_set,
             secure_delete,
             read_active_pet_pack,
+            import_pet_pack,
+            list_pet_packs,
+            read_pet_pack,
+            activate_pet_pack,
+            remove_pet_pack,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run OpenClaw Pets");

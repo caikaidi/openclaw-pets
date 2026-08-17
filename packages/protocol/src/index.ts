@@ -1,10 +1,11 @@
-export const PETS_PROTOCOL_VERSION = 2 as const;
+export const PETS_PROTOCOL_VERSION = 3 as const;
 export const PETS_PLUGIN_ID = "openclaw-pets" as const;
 
 export const PETS_RPC = {
   capabilities: "pets.capabilities",
   status: "pets.status",
   activityAppend: "pets.activity.append",
+  activityUpdate: "pets.activity.update",
   activityList: "pets.activity.list",
   activityDelete: "pets.activity.delete",
   transcriptionCreate: "pets.transcription.create",
@@ -131,7 +132,19 @@ export type ActivityObservation = {
   asrProvider?: string;
   asrRequestId?: string;
   route?: UtteranceRoute;
+  editedAt?: string;
+  revision?: string;
 };
+
+export type JournalUpdateRequest = {
+  id: string;
+  text: string;
+  expectedRevision: string;
+};
+
+export type JournalUpdateResult =
+  | { status: "updated" | "conflict"; observation: ActivityObservation }
+  | { status: "not_found" };
 
 export type ActivityPage = {
   status: JournalStatus;
@@ -167,6 +180,8 @@ const observationKeys = new Set([
   "asrProvider",
   "asrRequestId",
   "route",
+  "editedAt",
+  "revision",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -194,6 +209,9 @@ export function isActivityObservation(value: unknown): value is ActivityObservat
   if (value.asrProvider !== undefined && !isBoundedString(value.asrProvider, 128)) return false;
   if (value.asrRequestId !== undefined && !isBoundedString(value.asrRequestId, 256)) return false;
   if (value.route !== undefined && !(UTTERANCE_ROUTES as readonly unknown[]).includes(value.route)) return false;
+  if (value.editedAt !== undefined
+    && (!isBoundedString(value.editedAt, 64) || !Number.isFinite(Date.parse(value.editedAt)))) return false;
+  if (value.revision !== undefined && !isBoundedString(value.revision, 128)) return false;
   if (value.tags !== undefined) {
     if (!Array.isArray(value.tags) || value.tags.length > 20) return false;
     if (value.tags.some((tag) => !isBoundedString(tag, 64))) return false;

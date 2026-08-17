@@ -36,10 +36,11 @@ describe("OpenClaw Pets plugin config", () => {
     });
   });
 
-  it("keeps unmatched utterances on the confirmation route", () => {
+  it("enables conservative classification for unmatched utterances", () => {
     const config = resolveConfig({ routing: { default: "agent" } });
 
     expect(config.routing).not.toHaveProperty("default");
+    expect(config.routing.classifier).toEqual({ enabled: true, timeoutMs: 6_000 });
   });
 
   it("does not promote a fallback provider when no primary is configured", () => {

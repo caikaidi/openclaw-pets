@@ -27,7 +27,7 @@ crashes from Gateway.
 | Agent/model/tool execution | OpenClaw |
 | Session creation and approvals | OpenClaw |
 | Pet-originated-task-to-semantic-state projection | plugin |
-| Voice routing policy | plugin configuration |
+| Voice routing policy and tool-free classification | plugin configuration / OpenClaw model runtime |
 | ASR Provider selection and credentials | plugin configuration / OpenClaw SecretRef |
 | Activity persistence | configured Journal Provider |
 | Journal Provider selection and memory corpus adapter | plugin |
@@ -82,6 +82,15 @@ priority:
 Pet Packs map these meanings to artwork. Animation filenames and frame rows
 never appear in the protocol.
 
+Each companion prefixes its interaction UUID with its independently paired
+device id. Two computers may therefore use the same Gateway concurrently
+without sharing recording state, route dialogs, Session keys, projected task
+state, animations, or active Pet Pack selection. Journal observations remain
+shared through the configured Provider. Concurrent edits carry an opaque
+revision and stale writes are rejected instead of silently overwriting a newer
+device edit. Remote companions connect over authenticated `wss://` and pair as
+separate Gateway devices.
+
 ## ASR model
 
 The desktop never receives Provider credentials. It records one compressed
@@ -96,6 +105,14 @@ Gateway configuration. The desktop receives only availability, Provider names,
 the transcript, and an optional upstream request id. Audio is processed in
 memory and is never added to activity storage.
 
+After transcription, explicit routing prefixes remain authoritative.
+Unmatched text is sent to OpenClaw's bounded direct-completion runtime with
+tools, delivery, reasoning, and Session creation disabled. Only
+`record_only` and `task_candidate` are accepted. Ordinary observations are
+recorded immediately; task candidates open a manual choice. Classifier
+failure, timeout, invalid output, or uncertainty falls back to recording.
+OpenClaw execution always requires a user action.
+
 ## Context model
 
 OpenClaw Pets contributes an additive memory corpus; it does not replace
@@ -109,3 +126,18 @@ desktop remains Provider-agnostic and requests the user's local calendar-day
 window through `pets.activity.list`. Remote failures return explicit gaps;
 they are never rendered as an empty Journal. Automatic per-run context
 preparation is disabled unless the operator explicitly enables it.
+
+Journal updates preserve provenance and occurrence time while recording an
+edit timestamp and a new opaque revision. Local and HTTP Providers implement
+the same optimistic-lock contract so simultaneous companion edits cannot
+silently replace each other.
+
+## Imported Pet Packs
+
+The desktop may import a local ZIP or directory in canonical OpenClaw Pet Pack
+format or the verified Petdex spritesheet format. Import is a native trust
+boundary: archives are bounded, path traversal and links are rejected, raster
+type and dimensions are decoded, canonical data is staged and validated, and
+activation is an explicit atomic step. Imported packs without an asset license
+are marked `NOASSERTION`, remain local to that computer, and are never bundled
+or mirrored by OpenClaw Pets.

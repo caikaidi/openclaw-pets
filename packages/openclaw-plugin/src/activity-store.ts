@@ -1,6 +1,12 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { isActivityObservation, type ActivityObservation } from "@openclaw-pets/protocol";
+import {
+  isActivityObservation,
+  type ActivityObservation,
+  type JournalUpdateRequest,
+  type JournalUpdateResult,
+} from "@openclaw-pets/protocol";
 import type { JournalPageOptions, JournalProvider, JournalSearchResult } from "./journal-provider.js";
 
 function queryTerms(query: string): string[] {
@@ -18,6 +24,16 @@ function isContextObservation(observation: ActivityObservation): boolean {
   return observation.route === undefined || observation.route === "context";
 }
 
+function observationRevision(observation: ActivityObservation): string {
+  const content = { ...observation };
+  delete content.revision;
+  return createHash("sha256").update(JSON.stringify(content)).digest("hex");
+}
+
+function versioned(observation: ActivityObservation): ActivityObservation {
+  return observation.revision ? observation : { ...observation, revision: observationRevision(observation) };
+}
+
 export class ActivityStore implements JournalProvider {
   readonly kind = "local" as const;
   private readonly filePath: string;
@@ -25,7 +41,10 @@ export class ActivityStore implements JournalProvider {
   private readonly observations = new Map<string, ActivityObservation>();
   private writeChain: Promise<void> = Promise.resolve();
 
-  constructor(private readonly directory: string) {
+  constructor(
+    private readonly directory: string,
+    private readonly now: () => string = () => new Date().toISOString(),
+  ) {
     this.filePath = join(directory, "activities.jsonl");
   }
 
@@ -46,7 +65,7 @@ export class ActivityStore implements JournalProvider {
       if (!line.trim()) continue;
       try {
         const observation: unknown = JSON.parse(line);
-        if (isActivityObservation(observation)) this.observations.set(observation.id, observation);
+        if (isActivityObservation(observation)) this.observations.set(observation.id, versioned(observation));
       } catch {
         // Keep later valid records readable when one line is damaged.
       }
@@ -64,9 +83,35 @@ export class ActivityStore implements JournalProvider {
     return this.enqueueWrite(async () => {
       const existing = this.observations.get(observation.id);
       if (existing) return { inserted: false, observation: existing };
-      await appendFile(this.filePath, `${JSON.stringify(observation)}\n`, { encoding: "utf8", mode: 0o600 });
-      this.observations.set(observation.id, observation);
-      return { inserted: true, observation };
+      const stored = versioned(observation);
+      await appendFile(this.filePath, `${JSON.stringify(stored)}\n`, { encoding: "utf8", mode: 0o600 });
+      this.observations.set(stored.id, stored);
+      return { inserted: true, observation: stored };
+    });
+  }
+
+  async update(request: JournalUpdateRequest): Promise<JournalUpdateResult> {
+    await this.load();
+    return this.enqueueWrite(async () => {
+      const existing = this.observations.get(request.id);
+      if (!existing) return { status: "not_found" };
+      if (existing.revision !== request.expectedRevision) {
+        return { status: "conflict", observation: existing };
+      }
+      const unversioned: ActivityObservation = {
+        ...existing,
+        text: request.text,
+        editedAt: this.now(),
+      };
+      delete unversioned.revision;
+      const observation = versioned(unversioned);
+      const temporaryPath = `${this.filePath}.tmp`;
+      const next = [...this.observations.values()].map((item) => item.id === request.id ? observation : item);
+      const contents = next.map((item) => JSON.stringify(item)).join("\n");
+      await writeFile(temporaryPath, contents ? `${contents}\n` : "", { encoding: "utf8", mode: 0o600 });
+      await rename(temporaryPath, this.filePath);
+      this.observations.set(request.id, observation);
+      return { status: "updated", observation };
     });
   }
 

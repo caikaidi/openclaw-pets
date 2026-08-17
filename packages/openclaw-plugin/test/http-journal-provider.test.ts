@@ -74,4 +74,38 @@ describe("HttpJournalProvider", () => {
       "https://journal.example.test/v1/journal-provider/v1/retract",
     ]);
   });
+
+  it("updates through the versioned remote contract and preserves conflicts", async () => {
+    const updated = {
+      id: "shared-remote",
+      occurredAt: "2026-08-17T01:00:00.000Z",
+      source: "external_voice",
+      text: "远程修正",
+      editedAt: "2026-08-17T02:00:00.000Z",
+      revision: "revision-2",
+    };
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "updated", observation: updated }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "conflict", observation: updated }), { status: 200 }));
+    const provider = new HttpJournalProvider({
+      baseUrl: "https://journal.example.test",
+      apiKey: "secret",
+      timeoutMs: 4_000,
+    }, fetcher);
+
+    await expect(provider.update({
+      id: "shared-remote",
+      text: "远程修正",
+      expectedRevision: "revision-1",
+    })).resolves.toEqual({ status: "updated", observation: updated });
+    await expect(provider.update({
+      id: "shared-remote",
+      text: "陈旧覆盖",
+      expectedRevision: "revision-1",
+    })).resolves.toEqual({ status: "conflict", observation: updated });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "https://journal.example.test/v1/journal-provider/v1/update",
+      "https://journal.example.test/v1/journal-provider/v1/update",
+    ]);
+  });
 });

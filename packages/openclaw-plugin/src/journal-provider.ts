@@ -1,4 +1,9 @@
-import type { ActivityObservation, ActivityPage } from "@openclaw-pets/protocol";
+import type {
+  ActivityObservation,
+  ActivityPage,
+  JournalUpdateRequest,
+  JournalUpdateResult,
+} from "@openclaw-pets/protocol";
 
 export type JournalSearchResult = ActivityObservation & { score: number };
 
@@ -14,6 +19,7 @@ export type JournalPageOptions = {
 export interface JournalProvider {
   readonly kind: "local" | "http";
   append(observation: ActivityObservation): Promise<{ inserted: boolean; observation: ActivityObservation }>;
+  update(request: JournalUpdateRequest): Promise<JournalUpdateResult>;
   retract(id: string): Promise<boolean>;
   page(options: JournalPageOptions): Promise<ActivityPage>;
   getContext(id: string): Promise<ActivityObservation | null>;

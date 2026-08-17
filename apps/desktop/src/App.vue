@@ -14,6 +14,7 @@ import PetCanvas from "./components/PetCanvas.vue";
 import SpritePet from "./components/SpritePet.vue";
 import { BatchRecorder } from "./runtime/batch-recorder.js";
 import { activityGapMessage, activitySourceLabel, todayActivityWindow } from "./runtime/activity-journal.js";
+import { ActivityEditConflictError, saveActivityEdit } from "./runtime/activity-editor.js";
 import { transcribeRecording } from "./runtime/batch-transcription.js";
 import { asrCapabilityLabel, isCompatibleCapabilities } from "./runtime/asr-status.js";
 import {
@@ -21,9 +22,15 @@ import {
   shouldApplyInteractionStatus,
   type InteractionDisplayState,
 } from "./runtime/display-state.js";
-import { PetsGatewayClient, type GatewayConnectionState } from "./runtime/gateway-client.js";
+import {
+  PetsGatewayClient,
+  validateGatewayWebSocketUrl,
+  type GatewayConnectionState,
+} from "./runtime/gateway-client.js";
 import { clearConnectionCredential, writeConnectionCredential } from "./runtime/secure-store.js";
 import { loadActivePetPack, type LoadedPetPack } from "./runtime/pet-pack-loader.js";
+import { PetPackManager, type PetPackSummary } from "./runtime/pet-pack-manager.js";
+import { createDeviceInteractionId } from "./runtime/interaction-id.js";
 import { submitUtterance } from "./runtime/utterance-router.js";
 import {
   PET_SCALES,
@@ -87,9 +94,16 @@ const panel = ref<PanelTab | undefined>(connectionConfigured ? undefined : "sett
 const activities = ref<ActivityObservation[]>([]);
 const activityCursor = ref<string>();
 const activityWarning = ref("");
+const editingActivityId = ref<string>();
+const editingActivityText = ref("");
+const savingActivityId = ref<string>();
 const captureEnabled = ref(true);
 const transientMessage = ref("");
 const activePetPack = ref<LoadedPetPack>();
+const previewPetPack = ref<LoadedPetPack>();
+const previewPetPackKey = ref<string>();
+const installedPetPacks = ref<PetPackSummary[]>([]);
+const petPackBusy = ref(false);
 let transientTimer: number | undefined;
 let interactionTimer: number | undefined;
 let recordingTransition = false;
@@ -129,6 +143,8 @@ const rootStyle = computed(() => ({
 const windowController = new PetWindowController(33, "status");
 let gateway: PetsGatewayClient | undefined;
 const recorder = new BatchRecorder();
+const petPackManager = new PetPackManager();
+const renderedPetPack = computed(() => previewPetPack.value ?? activePetPack.value);
 
 function showTransient(message: string, duration = 2_800): void {
   transientMessage.value = message;
@@ -214,6 +230,93 @@ async function refreshPetPack(): Promise<void> {
   }
 }
 
+async function refreshInstalledPetPacks(): Promise<void> {
+  try {
+    installedPetPacks.value = await petPackManager.list();
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  }
+}
+
+async function openPetdex(): Promise<void> {
+  try {
+    await petPackManager.openPetdex();
+  } catch (cause) {
+    showTransient(readableError(cause));
+  }
+}
+
+async function importPetPack(kind: "zip" | "directory"): Promise<void> {
+  if (petPackBusy.value) return;
+  petPackBusy.value = true;
+  try {
+    const imported = await petPackManager.import(kind);
+    if (!imported) return;
+    previewPetPack.value = imported.preview;
+    previewPetPackKey.value = imported.summary.key;
+    await refreshInstalledPetPacks();
+    showTransient(`正在预览 ${imported.summary.name}，确认后再启用`);
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    petPackBusy.value = false;
+  }
+}
+
+async function previewInstalledPetPack(pack: PetPackSummary): Promise<void> {
+  if (petPackBusy.value) return;
+  petPackBusy.value = true;
+  try {
+    previewPetPack.value = await petPackManager.preview(pack.key);
+    previewPetPackKey.value = pack.key;
+    showTransient(`正在预览 ${pack.name}`);
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    petPackBusy.value = false;
+  }
+}
+
+async function activateInstalledPetPack(pack: PetPackSummary): Promise<void> {
+  if (petPackBusy.value) return;
+  petPackBusy.value = true;
+  try {
+    activePetPack.value = await petPackManager.activate(pack.key);
+    previewPetPack.value = undefined;
+    previewPetPackKey.value = undefined;
+    await refreshInstalledPetPacks();
+    showTransient(`已启用 ${pack.name}`);
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    petPackBusy.value = false;
+  }
+}
+
+async function removeInstalledPetPack(pack: PetPackSummary): Promise<void> {
+  if (petPackBusy.value || pack.active) return;
+  petPackBusy.value = true;
+  try {
+    await petPackManager.remove(pack.key);
+    if (previewPetPackKey.value === pack.key) {
+      previewPetPack.value = undefined;
+      previewPetPackKey.value = undefined;
+    }
+    await refreshInstalledPetPacks();
+    showTransient(`已移除 ${pack.name}`);
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    petPackBusy.value = false;
+  }
+}
+
+function closePanel(): void {
+  panel.value = undefined;
+  previewPetPack.value = undefined;
+  previewPetPackKey.value = undefined;
+}
+
 async function deleteActivity(id: string): Promise<void> {
   if (!gateway?.connected || !pluginAvailable.value) return;
   try {
@@ -226,6 +329,41 @@ async function deleteActivity(id: string): Promise<void> {
     await refreshActivities();
   } catch (cause) {
     showTransient(readableError(cause));
+  }
+}
+
+function beginActivityEdit(observation: ActivityObservation): void {
+  editingActivityId.value = observation.id;
+  editingActivityText.value = observation.text;
+}
+
+function cancelActivityEdit(): void {
+  editingActivityId.value = undefined;
+  editingActivityText.value = "";
+}
+
+async function updateActivity(observation: ActivityObservation): Promise<void> {
+  if (!gateway?.connected || !pluginAvailable.value || savingActivityId.value) return;
+  savingActivityId.value = observation.id;
+  try {
+    const updated = await saveActivityEdit(
+      (method, params) => gateway!.request(method, params),
+      observation,
+      editingActivityText.value,
+    );
+    activities.value = activities.value.map((item) => item.id === updated.id ? updated : item);
+    cancelActivityEdit();
+    showTransient("流水账已修改");
+  } catch (cause) {
+    if (cause instanceof ActivityEditConflictError) {
+      activities.value = activities.value.map((item) => item.id === cause.current.id ? cause.current : item);
+      editingActivityText.value = cause.current.text;
+      showTransient("这条流水已在另一台电脑修改，请确认最新内容后重试", 5_000);
+    } else {
+      showTransient(readableError(cause));
+    }
+  } finally {
+    savingActivityId.value = undefined;
   }
 }
 
@@ -309,7 +447,7 @@ async function toggleRecording(): Promise<void> {
       });
       return;
     }
-    setCurrentInteractionId(crypto.randomUUID());
+    setCurrentInteractionId(await createDeviceInteractionId());
     interactionState.value = "listening";
     await recorder.start();
     recording.value = true;
@@ -343,6 +481,7 @@ function selectScale(value: PetScale): void {
 async function openPanel(tab: PanelTab): Promise<void> {
   panel.value = tab;
   if (tab === "activity") await refreshActivities();
+  if (tab === "settings") await refreshInstalledPetPacks();
 }
 
 async function setCapture(enabled: boolean): Promise<void> {
@@ -356,9 +495,11 @@ async function setCapture(enabled: boolean): Promise<void> {
 }
 
 async function saveConnection(): Promise<void> {
-  const nextUrl = gatewayDraft.value.trim();
-  if (!/^wss?:\/\//u.test(nextUrl)) {
-    showTransient("Gateway 地址必须以 ws:// 或 wss:// 开头");
+  let nextUrl: string;
+  try {
+    nextUrl = validateGatewayWebSocketUrl(gatewayDraft.value);
+  } catch (cause) {
+    showTransient(readableError(cause));
     return;
   }
   localStorage.setItem("openclaw-pets.gateway-url", nextUrl);
@@ -409,10 +550,11 @@ onMounted(() => {
     await nextTick();
   });
   void refreshPetPack();
+  void refreshInstalledPetPacks();
   if (!connectionConfigured) return;
   gateway = new PetsGatewayClient({
     url: gatewayUrl.value,
-    appVersion: "0.3.0",
+    appVersion: "0.4.0",
     onStateChange: (state, message) => {
       connection.value = state;
       detail.value = message ?? "";
@@ -439,7 +581,7 @@ onBeforeUnmount(() => {
           <button :class="{ active: panel === 'activity' }" @click="openPanel('activity')">活动记录</button>
           <button :class="{ active: panel === 'settings' }" @click="openPanel('settings')">设置</button>
         </nav>
-        <button class="icon-button" aria-label="关闭" @click="panel = undefined">×</button>
+        <button class="icon-button" aria-label="关闭" @click="closePanel">×</button>
       </header>
 
       <div v-if="panel === 'activity'" class="panel-body activity-list">
@@ -447,10 +589,27 @@ onBeforeUnmount(() => {
         <p v-if="activities.length === 0 && !activityWarning" class="empty">今天还没有流水账。</p>
         <article v-for="item in activities" :key="item.id">
           <div class="activity-meta">
-            <time>{{ new Date(item.occurredAt).toLocaleString() }}</time>
-            <button aria-label="删除这条记录" @click="deleteActivity(item.id)">删除</button>
+            <time>
+              {{ new Date(item.occurredAt).toLocaleString() }}
+              <span v-if="item.editedAt"> · 已编辑</span>
+            </time>
+            <div class="activity-actions">
+              <button aria-label="编辑这条记录" @click="beginActivityEdit(item)">编辑</button>
+              <button aria-label="删除这条记录" @click="deleteActivity(item.id)">删除</button>
+            </div>
           </div>
-          <p>{{ item.text }}</p>
+          <template v-if="editingActivityId === item.id">
+            <textarea v-model="editingActivityText" class="activity-edit" rows="3" maxlength="8000" />
+            <div class="activity-edit-actions">
+              <button class="secondary" @click="cancelActivityEdit">取消</button>
+              <button
+                class="primary"
+                :disabled="savingActivityId === item.id || !editingActivityText.trim()"
+                @click="updateActivity(item)"
+              >保存</button>
+            </div>
+          </template>
+          <p v-else>{{ item.text }}</p>
           <small>{{ [activitySourceLabel(item.source), item.asrProvider, item.route].filter(Boolean).join(" · ") }}</small>
         </article>
         <button v-if="activityCursor" class="secondary load-more" @click="refreshActivities(true)">加载更早记录</button>
@@ -473,9 +632,34 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <section class="pet-pack-settings">
+          <div class="setting-row">
+            <span>宠物形象</span>
+            <small>{{ activePetPack?.manifest.name ?? "内置宠物" }}</small>
+          </div>
+          <div class="pet-pack-import-actions">
+            <button class="secondary" @click="openPetdex">浏览 Petdex</button>
+            <button class="secondary" :disabled="petPackBusy" @click="importPetPack('zip')">导入 ZIP</button>
+            <button class="secondary" :disabled="petPackBusy" @click="importPetPack('directory')">导入文件夹</button>
+          </div>
+          <p class="pet-pack-note">从 codex-pets.net 下载后导入。本地素材不会上传或重新分发。</p>
+          <div v-if="installedPetPacks.length" class="pet-pack-list">
+            <article v-for="pack in installedPetPacks" :key="pack.key" :class="{ previewing: previewPetPackKey === pack.key }">
+              <div>
+                <strong>{{ pack.name }}</strong>
+                <small>{{ pack.active ? "当前使用" : pack.license === "NOASSERTION" ? "本地使用 · 授权未声明" : pack.license }}</small>
+              </div>
+              <div class="pet-pack-actions">
+                <button class="secondary" :disabled="petPackBusy" @click="previewInstalledPetPack(pack)">预览</button>
+                <button v-if="!pack.active" class="primary" :disabled="petPackBusy" @click="activateInstalledPetPack(pack)">启用</button>
+                <button v-if="!pack.active" class="secondary danger" :disabled="petPackBusy" @click="removeInstalledPetPack(pack)">移除</button>
+              </div>
+            </article>
+          </div>
+        </section>
         <div class="setting-row">
-          <span>Pet Pack</span>
-          <button @click="refreshPetPack">{{ activePetPack?.manifest.name ?? "内置宠物" }}</button>
+          <span>重新读取当前 Pet Pack</span>
+          <button @click="refreshPetPack">重新载入</button>
         </div>
         <div class="setting-row">
           <span>语音转写</span>
@@ -524,7 +708,7 @@ onBeforeUnmount(() => {
       @pointercancel="onPetPointerUp"
       @contextmenu.prevent="openPanel('activity')"
     >
-      <SpritePet v-if="activePetPack" :state="displayState" :pack="activePetPack" />
+      <SpritePet v-if="renderedPetPack" :state="displayState" :pack="renderedPetPack" />
       <PetCanvas v-else :state="displayState" />
     </div>
   </main>

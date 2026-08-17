@@ -10,7 +10,7 @@ This repository is a **greenfield rewrite**. It does not fork or depend on the
 earlier desktop-pet repository used during product discovery, and it does not
 include privately evaluated discovery artwork.
 
-> Status: `0.3.0` public beta. Source builds are supported. Official notarized
+> Status: `0.4.0` public beta. Source builds are supported. Official notarized
 > macOS binaries and automated release publishing are not available yet.
 
 ## Architecture
@@ -53,16 +53,22 @@ second model router, tool executor, or competing memory system.
 - Click-to-record with one compressed recording submitted after the user
   stops. ASR runs through a plugin-configured primary provider and optional
   fallback provider.
-- Configurable voice routes: add context, dispatch to an agent, or ask the
-  user to decide.
+- Conservative voice routing: explicit prefixes win; otherwise a bounded,
+  tool-free OpenClaw classifier records ordinary observations automatically
+  and asks the user only for likely task requests. It never auto-executes.
 - User-controlled Journal with replaceable local/HTTP Providers, pause,
-  cross-source listing, and retract operations.
+  cross-source listing, optimistic-lock editing, and retract operations.
 - Optional, bounded OpenClaw prompt supplementation; disabled by default.
 - Code-free Pet Packs with path, type, geometry, and SHA-256 validation.
+  Petdex ZIPs or directories downloaded from codex-pets.net can be imported,
+  previewed, and activated locally without granting them code execution.
 - Device-bound Gateway authentication with the Ed25519 private key and tokens
   stored in the operating-system credential store.
 - A transparent window whose status and decision surfaces expand above the
   pet without moving it away from the physical screen edge.
+- Multiple independently paired companions can share one remote Gateway and
+  Journal while keeping recording, task state, animation, and active Pet Pack
+  local to each device.
 
 ## Development
 

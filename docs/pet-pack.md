@@ -9,14 +9,34 @@ active/
     └── spritesheet.webp
 ```
 
-The current macOS development build reads the active pack from:
+The macOS app keeps imported packs and its active selection under:
 
 ```text
-~/Library/Application Support/dev.openclaw.pets/pet-packs/active/
+~/Library/Application Support/dev.openclaw.pets/pet-packs/
+├── installed/
+└── active.json
 ```
 
-If the directory is absent or invalid, the app uses its original CSS fallback
-pet. A settings action reloads the active pack without restarting Gateway.
+The earlier `pet-packs/active/` directory remains a local compatibility
+fallback. If no valid pack is selected, the app uses its original CSS fallback
+pet. Pet selection is local to each companion computer and never restarts
+Gateway.
+
+## Importing from Petdex
+
+Open Settings, choose **Browse Petdex**, download a pet from
+`https://codex-pets.net/`, then import its ZIP or directory. The first supported
+Petdex adapter recognizes the verified `pet.json` fields `id`, `displayName`,
+`spritesheetPath`, optional `spriteVersionNumber`, and optional metadata. It
+accepts the documented fixed 192×208 frames in an eight-column spritesheet:
+v1 has nine rows (`1536×1872`) and v2 has eleven (`1536×2288`).
+
+Import validates and stages the source, converts supported animation rows into
+OpenClaw semantic states, and opens a preview. The current pet changes only
+after **Activate**. Cancellation or any validation failure leaves the active
+selection unchanged. OpenClaw Pets opens the public website in the system
+browser; it does not scrape its catalog, mirror artwork, or depend on an
+undocumented site API.
 
 ## Manifest
 
@@ -79,9 +99,16 @@ alignment.
 The format rejects JavaScript, HTML, SVG, native libraries, shaders, links,
 special files, absolute paths, path traversal, and external URLs.
 
+ZIP and directory imports add limits on expanded size, file count, nesting,
+duplicate paths, links, and special files. Raster MIME and dimensions are
+verified from decoded content rather than trusting filenames.
+
 ## Licensing
 
 The `license` field is mandatory. It describes the pack's visual assets, not
 the OpenClaw Pets code. Pack authors must have redistribution rights and
 should include any required attribution alongside the pack. Format
 compatibility is not evidence that an asset is legally redistributable.
+Petdex metadata does not currently declare a reusable asset license, so those
+imports are labeled `NOASSERTION` and treated as local-only unless the user has
+separate redistribution rights.

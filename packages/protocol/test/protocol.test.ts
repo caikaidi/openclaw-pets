@@ -25,12 +25,13 @@ describe("Pets Protocol", () => {
       text: "Rejected source",
     })).toBe(false);
   });
-  it("exposes the versioned v2 batch interaction control surface", () => {
-    expect(PETS_PROTOCOL_VERSION).toBe(2);
+  it("exposes the versioned v3 editable Journal control surface", () => {
+    expect(PETS_PROTOCOL_VERSION).toBe(3);
     expect(PETS_RPC).toEqual({
       capabilities: "pets.capabilities",
       status: "pets.status",
       activityAppend: "pets.activity.append",
+      activityUpdate: "pets.activity.update",
       activityList: "pets.activity.list",
       activityDelete: "pets.activity.delete",
       transcriptionCreate: "pets.transcription.create",

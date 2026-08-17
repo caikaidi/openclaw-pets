@@ -2,7 +2,7 @@
   "id": "openclaw-pets",
   "name": "OpenClaw Pets",
   "description": "Backend state projection and user-controlled context for the OpenClaw Pets desktop companion.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "enabledByDefault": false,
   "activation": {
     "onStartup": true
@@ -146,6 +146,26 @@
           "targetAgentId": {
             "type": "string",
             "maxLength": 128
+          },
+          "classifier": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "model": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 500,
+                "maximum": 30000,
+                "default": 6000
+              }
+            }
           }
         }
       }
@@ -203,6 +223,18 @@
     },
     "routing.targetAgentId": {
       "label": "Target agent"
+    },
+    "routing.classifier.enabled": {
+      "label": "Classify unmatched speech",
+      "help": "Ordinary statements are recorded automatically; likely tasks still require confirmation."
+    },
+    "routing.classifier.model": {
+      "label": "Classifier model",
+      "advanced": true
+    },
+    "routing.classifier.timeoutMs": {
+      "label": "Classifier timeout",
+      "advanced": true
     }
   }
 }

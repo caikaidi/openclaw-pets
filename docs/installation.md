@@ -1,6 +1,6 @@
 # Source installation
 
-OpenClaw Pets `0.3.0` is a public beta. Install the Gateway plugin and desktop
+OpenClaw Pets `0.4.0` is a public beta. Install the Gateway plugin and desktop
 app from one clean source checkout. Official notarized macOS binaries are not
 published yet.
 
@@ -27,7 +27,7 @@ npm pack --pack-destination ../../dist
 Install the resulting archive with OpenClaw's local package installer:
 
 ```bash
-openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.3.0.tgz
+openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.4.0.tgz
 ```
 
 Configure ASR, routing, and the Journal Provider through the OpenClaw plugin
@@ -56,6 +56,11 @@ On first launch:
 2. approve the new device in OpenClaw;
 3. allow microphone access when macOS asks;
 4. install a licensed Pet Pack, or use the built-in CSS fallback pet.
+
+Each additional computer repeats pairing with its own device identity. Use an
+authenticated `wss://` Gateway address when connecting remotely. Pet Pack
+selection and current interaction state stay on that computer; Journal data is
+shared by the configured Provider.
 
 Never paste Gateway, ASR, or Journal credentials into issue reports, shell
 arguments, source files, or Pet Pack manifests.

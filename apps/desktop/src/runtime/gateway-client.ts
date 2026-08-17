@@ -39,6 +39,29 @@ type PetsGatewayAuthPlan = GatewayBrowserDeviceAuthPlan & {
 
 export const gatewayRequestedScopes = ["operator.read", "operator.write"] as const;
 
+export function validateGatewayWebSocketUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new Error("Gateway address must be a valid WebSocket URL");
+  }
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    throw new Error("Gateway address must use a WebSocket URL");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Gateway URL credentials are not allowed; use the secure credential field");
+  }
+  if (parsed.hash) throw new Error("Gateway WebSocket URL may not contain a fragment");
+  const loopback = parsed.hostname === "localhost"
+    || parsed.hostname === "127.0.0.1"
+    || parsed.hostname === "[::1]";
+  if (parsed.protocol === "ws:" && !loopback) {
+    throw new Error("Remote Gateway connections must use wss://");
+  }
+  return parsed.toString();
+}
+
 export function gatewayClientInfo(appVersion: string, platform: string): GatewayClientInfo {
   return {
     id: GATEWAY_CLIENT_IDS.GATEWAY_CLIENT,

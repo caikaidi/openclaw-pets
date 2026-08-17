@@ -19,6 +19,10 @@ import { resolveConfig } from "./config.js";
 import { HttpJournalProvider } from "./http-journal-provider.js";
 import type { JournalProvider } from "./journal-provider.js";
 import { PetStateProjector } from "./state-projector.js";
+import {
+  createOpenClawUtteranceClassifier,
+  type UtteranceClassifier,
+} from "./utterance-classifier.js";
 
 export type PetsPluginApi = Pick<
   OpenClawPluginApi,
@@ -30,7 +34,7 @@ export type PetsPluginApi = Pick<
   | "registerService"
   | "logger"
   | "agent"
->;
+> & Partial<Pick<OpenClawPluginApi, "runtime">>;
 
 function stringField(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === "string" && value.trim().length > 0);
@@ -58,11 +62,12 @@ function labeledActivityText(item: ActivityObservation): string {
   return `${untrustedActivityLabel}: ${item.text}`;
 }
 
-function routeUtterance(
+async function routeUtterance(
   text: string,
   requestedRoute: UtteranceRoute | undefined,
   routing: ReturnType<typeof resolveConfig>["routing"],
-): UtteranceRouteResult {
+  classifier: UtteranceClassifier | undefined,
+): Promise<UtteranceRouteResult> {
   if (requestedRoute) {
     return {
       route: requestedRoute,
@@ -83,10 +88,15 @@ function routeUtterance(
       ...(route === "agent" && routing.targetAgentId ? { targetAgentId: routing.targetAgentId } : {}),
     };
   }
-  return {
-    route: "confirm",
-    text,
-  };
+  if (!classifier) return { route: "context", text };
+  try {
+    const classification = await classifier.classify(text);
+    return classification === "task_candidate"
+      ? { route: "confirm", text }
+      : { route: "context", text };
+  } catch {
+    return { route: "context", text };
+  }
 }
 
 const audioMimeTypes = new Set([
@@ -118,7 +128,7 @@ function petsInteractionId(sessionKey: string | undefined): string | undefined {
 
 export function registerOpenClawPets(
   api: PetsPluginApi,
-  dependencies: { asr?: AsrProvider; journal?: JournalProvider } = {},
+  dependencies: { asr?: AsrProvider; journal?: JournalProvider; classifier?: UtteranceClassifier } = {},
 ): void {
   const config = resolveConfig(api.pluginConfig);
   const asr = dependencies.asr ?? createAsrProvider(config.asr.primary, config.asr.fallback);
@@ -126,6 +136,14 @@ export function registerOpenClawPets(
     ? new HttpJournalProvider(config.journal.http)
     : new ActivityStore(api.resolvePath(config.storagePath)));
   const projector = new PetStateProjector();
+  const classifier = dependencies.classifier
+    ?? (config.routing.classifier.enabled && api.runtime
+      ? createOpenClawUtteranceClassifier(api.runtime, {
+          ...(config.routing.targetAgentId ? { agentId: config.routing.targetAgentId } : {}),
+          ...(config.routing.classifier.model ? { model: config.routing.classifier.model } : {}),
+          timeoutMs: config.routing.classifier.timeoutMs,
+        })
+      : undefined);
   let asrHealth: AsrHealth = asr ? "configured" : "unconfigured";
   let captureEnabled = true;
   let unsubscribeStatus: (() => void) | undefined;
@@ -257,7 +275,28 @@ export function registerOpenClawPets(
     }
   }, { scope: "operator.write" });
 
-  api.registerGatewayMethod(PETS_RPC.utteranceRoute, ({ params, respond }) => {
+  api.registerGatewayMethod(PETS_RPC.activityUpdate, async ({ params, respond }) => {
+    const id = typeof params.id === "string" ? params.id : "";
+    const text = typeof params.text === "string" ? params.text.trim() : "";
+    const expectedRevision = typeof params.expectedRevision === "string" ? params.expectedRevision : "";
+    if (!id || id.length > 128 || id !== id.trim()
+      || !text || text.length > 8_000
+      || !expectedRevision || expectedRevision.length > 128 || expectedRevision !== expectedRevision.trim()) {
+      respond(false, undefined, error(
+        "INVALID_REQUEST",
+        "id, text, and expectedRevision must be bounded non-empty strings",
+      ));
+      return;
+    }
+    try {
+      respond(true, await journal.update({ id, text, expectedRevision }));
+    } catch (cause) {
+      api.logger.error(`openclaw-pets: failed to update activity: ${cause instanceof Error ? cause.message : String(cause)}`);
+      respond(false, undefined, error("UNAVAILABLE", "activity storage is unavailable"));
+    }
+  }, { scope: "operator.write" });
+
+  api.registerGatewayMethod(PETS_RPC.utteranceRoute, async ({ params, respond }) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
     const requestedRoute = params.requestedRoute;
     if (!text || text.length > 8_000) {
@@ -271,7 +310,7 @@ export function registerOpenClawPets(
       respond(false, undefined, error("INVALID_REQUEST", "requestedRoute is invalid"));
       return;
     }
-    respond(true, routeUtterance(text, requestedRoute, config.routing));
+    respond(true, await routeUtterance(text, requestedRoute, config.routing, classifier));
   }, { scope: "operator.write" });
 
   api.registerGatewayMethod(PETS_RPC.contextPreview, async ({ params, respond }) => {

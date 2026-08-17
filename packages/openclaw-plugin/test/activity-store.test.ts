@@ -5,6 +5,49 @@ import { describe, expect, it } from "vitest";
 import { ActivityStore } from "../src/activity-store.js";
 
 describe("ActivityStore", () => {
+  it("updates one observation without losing provenance and rejects a stale device edit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-store-"));
+    const store = new ActivityStore(directory, () => "2026-08-17T08:30:00.000Z");
+    await store.append({
+      id: "shared-edit",
+      occurredAt: "2026-08-17T08:00:00.000Z",
+      source: "external_voice",
+      text: "原始流水",
+      asrProvider: "example-asr",
+    });
+    const original = (await store.page({ limit: 10 })).observations[0]!;
+
+    expect(original.revision).toEqual(expect.any(String));
+    await expect(store.update({
+      id: original.id,
+      text: "修正后的流水",
+      expectedRevision: original.revision!,
+    })).resolves.toMatchObject({
+      status: "updated",
+      observation: {
+        id: "shared-edit",
+        occurredAt: "2026-08-17T08:00:00.000Z",
+        source: "external_voice",
+        text: "修正后的流水",
+        asrProvider: "example-asr",
+        editedAt: "2026-08-17T08:30:00.000Z",
+        revision: expect.any(String),
+      },
+    });
+    await expect(store.update({
+      id: original.id,
+      text: "另一台电脑的旧版本覆盖",
+      expectedRevision: original.revision!,
+    })).resolves.toMatchObject({
+      status: "conflict",
+      observation: { text: "修正后的流水" },
+    });
+    expect((await store.page({ limit: 10 })).observations[0]).toMatchObject({
+      text: "修正后的流水",
+      source: "external_voice",
+    });
+  });
+
   it("persists observations idempotently and exposes lexical context search", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-store-"));
     const store = new ActivityStore(directory);
@@ -16,14 +59,22 @@ describe("ActivityStore", () => {
       tags: ["laser", "thermal"],
     };
 
-    expect(await store.append(observation)).toEqual({ inserted: true, observation });
-    expect(await store.append(observation)).toEqual({ inserted: false, observation });
+    expect(await store.append(observation)).toMatchObject({
+      inserted: true,
+      observation: { ...observation, revision: expect.any(String) },
+    });
+    expect(await store.append(observation)).toMatchObject({
+      inserted: false,
+      observation: { ...observation, revision: expect.any(String) },
+    });
     expect(await store.search("thermal driver", 5)).toEqual([
       expect.objectContaining({ id: "obs-1", text: observation.text }),
     ]);
 
     const reloaded = new ActivityStore(directory);
-    expect(await reloaded.list({ limit: 10 })).toEqual([observation]);
+    expect(await reloaded.list({ limit: 10 })).toEqual([
+      { ...observation, revision: expect.any(String) },
+    ]);
     expect(await reloaded.delete("obs-1")).toBe(true);
     expect(await reloaded.delete("obs-1")).toBe(false);
     expect(await new ActivityStore(directory).list({ limit: 10 })).toEqual([]);
@@ -42,6 +93,33 @@ describe("ActivityStore", () => {
 
     expect(await Promise.all([store.delete("one"), store.delete("two")])).toEqual([true, true]);
     expect(await new ActivityStore(directory).list({ limit: 10 })).toEqual([]);
+  });
+
+  it("preserves simultaneous observations from two companion devices", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-store-"));
+    const store = new ActivityStore(directory);
+
+    await Promise.all([
+      store.append({
+        id: "device-a-entry",
+        occurredAt: "2026-08-17T12:00:00.000Z",
+        source: "desktop_voice",
+        text: "First companion entry",
+        interactionId: `${"a".repeat(64)}.11111111-2222-4333-8444-555555555555`,
+      }),
+      store.append({
+        id: "device-b-entry",
+        occurredAt: "2026-08-17T12:00:01.000Z",
+        source: "desktop_voice",
+        text: "Second companion entry",
+        interactionId: `${"b".repeat(64)}.11111111-2222-4333-8444-555555555555`,
+      }),
+    ]);
+
+    expect((await store.page({ limit: 10 })).observations.map((item) => item.id)).toEqual([
+      "device-b-entry",
+      "device-a-entry",
+    ]);
   });
 
   it("keeps non-context transcripts in activity history without injecting them as context", async () => {
