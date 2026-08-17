@@ -1,0 +1,28 @@
+{
+  "name": "@openclaw-pets/petpack",
+  "version": "0.3.0",
+  "description": "Validation and rendering metadata for inert OpenClaw Pet Packs",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caikaidi/openclaw-pets.git",
+    "directory": "packages/petpack"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "corepack pnpm --filter @openclaw-pets/protocol build && vitest run",
+    "typecheck": "corepack pnpm --filter @openclaw-pets/protocol build && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openclaw-pets/protocol": "workspace:*"
+  }
+}

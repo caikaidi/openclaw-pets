@@ -1,0 +1,208 @@
+{
+  "id": "openclaw-pets",
+  "name": "OpenClaw Pets",
+  "description": "Backend state projection and user-controlled context for the OpenClaw Pets desktop companion.",
+  "version": "0.3.0",
+  "enabledByDefault": false,
+  "activation": {
+    "onStartup": true
+  },
+  "configContracts": {
+    "secretInputs": {
+      "paths": [
+        { "path": "asr.primary.apiKey", "expected": "string", "ownerKind": "route" },
+        { "path": "asr.fallback.apiKey", "expected": "string", "ownerKind": "route" },
+        { "path": "journal.http.apiKey", "expected": "string", "ownerKind": "route" }
+      ]
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "$defs": {
+      "secretRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string", "enum": ["env", "file", "exec", "store"] },
+          "provider": { "type": "string" },
+          "id": { "type": "string" }
+        },
+        "required": ["source", "provider", "id"]
+      },
+      "secretInput": {
+        "anyOf": [
+          { "type": "string", "minLength": 1 },
+          { "$ref": "#/$defs/secretRef" }
+        ]
+      },
+      "asrProvider": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["bailian-token-plan", "dashscope", "openai-compatible", "webhook"]
+          },
+          "apiKey": { "$ref": "#/$defs/secretInput" },
+          "baseUrl": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "minLength": 1 },
+          "model": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "properties": {
+      "storagePath": {
+        "type": "string",
+        "default": "~/.openclaw/openclaw-pets"
+      },
+      "journal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": ["local", "http"],
+            "default": "local"
+          },
+          "http": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "baseUrl": { "type": "string", "minLength": 1 },
+              "apiKey": { "$ref": "#/$defs/secretInput" },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 30000,
+                "default": 8000
+              }
+            },
+            "required": ["baseUrl"]
+          }
+        }
+      },
+      "contextInjection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "maxItems": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 3
+          }
+        }
+      },
+      "asr": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxAudioBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10485760,
+            "default": 10485760
+          },
+          "maxDurationMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 120000,
+            "default": 120000
+          },
+          "vocabulary": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "maxLength": 80 }
+          },
+          "contextHints": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "maxLength": 500 }
+          },
+          "primary": { "$ref": "#/$defs/asrProvider" },
+          "fallback": { "$ref": "#/$defs/asrProvider" }
+        }
+      },
+      "routing": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contextPrefixes": {
+            "type": "array",
+            "maxItems": 50,
+            "items": { "type": "string", "maxLength": 80 }
+          },
+          "agentPrefixes": {
+            "type": "array",
+            "maxItems": 50,
+            "items": { "type": "string", "maxLength": 80 }
+          },
+          "targetAgentId": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "storagePath": {
+      "label": "Activity storage path",
+      "advanced": true
+    },
+    "journal.provider": {
+      "label": "Journal provider"
+    },
+    "journal.http.baseUrl": {
+      "label": "Remote Journal base URL",
+      "advanced": true
+    },
+    "journal.http.apiKey": {
+      "label": "Remote Journal credential",
+      "sensitive": true
+    },
+    "contextInjection.enabled": {
+      "label": "Inject recent activity context",
+      "help": "Off by default. Search remains available when automatic injection is disabled."
+    },
+    "contextInjection.maxItems": {
+      "label": "Maximum injected observations"
+    },
+    "asr.primary.type": {
+      "label": "Primary ASR provider"
+    },
+    "asr.primary.apiKey": {
+      "label": "Primary ASR credential",
+      "sensitive": true
+    },
+    "asr.fallback.type": {
+      "label": "Fallback ASR provider"
+    },
+    "asr.fallback.apiKey": {
+      "label": "Fallback ASR credential",
+      "sensitive": true
+    },
+    "asr.vocabulary": {
+      "label": "ASR vocabulary hints"
+    },
+    "asr.contextHints": {
+      "label": "ASR disambiguation hints",
+      "advanced": true
+    },
+    "routing.contextPrefixes": {
+      "label": "Context prefixes"
+    },
+    "routing.agentPrefixes": {
+      "label": "Agent prefixes"
+    },
+    "routing.targetAgentId": {
+      "label": "Target agent"
+    }
+  }
+}

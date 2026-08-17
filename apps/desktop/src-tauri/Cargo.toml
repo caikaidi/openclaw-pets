@@ -1,0 +1,29 @@
+[package]
+name = "openclaw-pets-desktop"
+version = "0.3.0"
+description = "Native desktop companion for OpenClaw"
+authors = ["OpenClaw Pets contributors"]
+license = "Apache-2.0"
+edition = "2021"
+
+[lib]
+name = "openclaw_pets_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.4", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+keyring = { version = "3.6.3", features = ["apple-native"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "webp"] }
+rand = "0.8.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+tauri = { version = "2.10.1", features = ["macos-private-api"] }
+walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"

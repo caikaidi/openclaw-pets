@@ -1,0 +1,35 @@
+{
+  "name": "openclaw-pets",
+  "version": "0.3.0",
+  "description": "Native desktop pets, voice input, and explicit context for OpenClaw",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caikaidi/openclaw-pets.git"
+  },
+  "homepage": "https://github.com/caikaidi/openclaw-pets#readme",
+  "bugs": {
+    "url": "https://github.com/caikaidi/openclaw-pets/issues"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "corepack pnpm -r --if-present build",
+    "lint": "corepack pnpm -r --if-present lint",
+    "test": "corepack pnpm -r --if-present test",
+    "typecheck": "corepack pnpm -r --if-present typecheck",
+    "check": "corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "22.19.17",
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
+    "vitest": "3.2.4"
+  }
+}

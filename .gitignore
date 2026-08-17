@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+target/
+.DS_Store
+*.log
+*.dmg
+*.app
+.env
+.env.*
+!.env.example
+.private/

@@ -1,0 +1,38 @@
+{
+  "name": "@openclaw-pets/desktop",
+  "version": "0.3.0",
+  "description": "Native macOS desktop companion for OpenClaw Pets",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caikaidi/openclaw-pets.git",
+    "directory": "apps/desktop"
+  },
+  "scripts": {
+    "build": "corepack pnpm --filter @openclaw-pets/protocol build && corepack pnpm --filter @openclaw-pets/petpack build && vue-tsc --noEmit && vite build",
+    "dev": "vite",
+    "lint": "eslint src --max-warnings=0",
+    "test": "corepack pnpm --filter @openclaw-pets/protocol build && corepack pnpm --filter @openclaw-pets/petpack build && vitest run",
+    "typecheck": "corepack pnpm --filter @openclaw-pets/protocol build && corepack pnpm --filter @openclaw-pets/petpack build && vue-tsc --noEmit",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@openclaw-pets/petpack": "workspace:*",
+    "@openclaw-pets/protocol": "workspace:*",
+    "@openclaw/gateway-client": "2026.8.1-beta.2",
+    "@openclaw/gateway-protocol": "2026.8.1-beta.2",
+    "@tauri-apps/api": "2.10.1",
+    "vue": "3.5.32"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.10.1",
+    "@vitejs/plugin-vue": "5.2.4",
+    "typescript": "5.9.3",
+    "vite": "6.4.2",
+    "vue-tsc": "2.2.12"
+  }
+}
