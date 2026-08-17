@@ -10,7 +10,7 @@ type StoredDeviceIdentity = {
   publicKey: string;
 };
 
-function tokenKey(gatewayUrl: string, clientId: string, deviceId: string, role: string): string {
+export function deviceTokenKey(gatewayUrl: string, clientId: string, deviceId: string, role: string): string {
   return `gateway-token:${gatewayUrl}:${clientId}:${deviceId}:${role}`;
 }
 
@@ -30,7 +30,7 @@ export function createDeviceTokenStore(gatewayUrl: string): GatewayBrowserDevice
   return {
     async load(params) {
       const value = await invoke<string | null>("secure_get", {
-        key: tokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
+        key: deviceTokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
       });
       if (!value) return null;
       try {
@@ -42,13 +42,13 @@ export function createDeviceTokenStore(gatewayUrl: string): GatewayBrowserDevice
     },
     async store(params) {
       await invoke("secure_set", {
-        key: tokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
+        key: deviceTokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
         value: JSON.stringify({ token: params.token, scopes: params.scopes }),
       });
     },
     async clear(params) {
       await invoke("secure_delete", {
-        key: tokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
+        key: deviceTokenKey(gatewayUrl, params.clientId, params.deviceId, params.role),
       });
     },
   };

@@ -127,6 +127,21 @@ fn open_directory_nofollow(path: &Path) -> Result<File, String> {
         .map_err(|_| "Pet import source is not a safe directory".to_string())
 }
 
+fn open_regular_file_nofollow(path: &Path, max_bytes: u64) -> Result<File, String> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| "Pet import source is not a safe regular file".to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "Pet import source metadata is unavailable".to_string())?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err("Pet import source is not a safe regular file".into());
+    }
+    Ok(file)
+}
+
 fn openat_nofollow(parent: &File, name: &std::ffi::OsStr, directory: bool) -> Result<File, String> {
     let name = CString::new(name.as_bytes())
         .map_err(|_| "Pet import contains an unsafe path".to_string())?;
@@ -209,13 +224,8 @@ fn read_directory_source(root: &Path) -> Result<HashMap<String, Vec<u8>>, String
 }
 
 fn read_zip_source(path: &Path) -> Result<HashMap<String, Vec<u8>>, String> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|_| "Pet import ZIP is unavailable".to_string())?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_TOTAL_BYTES
-    {
-        return Err("Pet import ZIP is not a safe regular file".into());
-    }
-    let file = File::open(path).map_err(|_| "Pet import ZIP could not be read".to_string())?;
+    let file = open_regular_file_nofollow(path, MAX_TOTAL_BYTES)
+        .map_err(|_| "Pet import ZIP is not a safe regular file".to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|_| "Pet import ZIP is invalid".to_string())?;
     if archive.len() > MAX_FILES {
         return Err("Pet import exceeds the file limits".into());
@@ -695,6 +705,7 @@ mod tests {
     use std::fs;
     use std::io::Cursor;
     use std::io::Write;
+    use std::os::unix::fs::symlink;
     use zip::write::SimpleFileOptions;
 
     fn write_petdex_source(root: &Path) {
@@ -803,6 +814,20 @@ mod tests {
         assert!(list_installed(app_data.path())
             .expect("installed")
             .is_empty());
+    }
+
+    #[test]
+    fn refuses_to_open_a_zip_through_a_symbolic_link() {
+        let source = tempfile::Builder::new()
+            .suffix(".zip")
+            .tempfile()
+            .expect("zip source");
+        let directory = tempfile::tempdir().expect("link directory");
+        let link = directory.path().join("pet.zip");
+        symlink(source.path(), &link).expect("zip symlink");
+
+        let error = read_zip_source(&link).expect_err("ZIP symlinks must fail closed");
+        assert!(error.contains("safe regular file"));
     }
 
     #[test]

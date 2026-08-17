@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { shouldApplyInteractionStatus } from "../src/runtime/display-state.js";
 import { createDeviceInteractionId } from "../src/runtime/interaction-id.js";
+import { deviceTokenKey } from "../src/runtime/secure-store.js";
 
 describe("multiple companion computers", () => {
   it("names simultaneous interactions by the independently paired device", async () => {
@@ -18,5 +19,7 @@ describe("multiple companion computers", () => {
     expect(first.length).toBeLessThanOrEqual(128);
     expect(shouldApplyInteractionStatus(first, { interactionId: first })).toBe(true);
     expect(shouldApplyInteractionStatus(first, { interactionId: second })).toBe(false);
+    expect(deviceTokenKey("wss://gateway.example.com", "gateway-client", "a".repeat(64), "operator"))
+      .not.toBe(deviceTokenKey("wss://gateway.example.com", "gateway-client", "b".repeat(64), "operator"));
   });
 });
