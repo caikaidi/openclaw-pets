@@ -27,4 +27,17 @@ describe("macOS microphone bundle contract", () => {
       /<key>NSMicrophoneUsageDescription<\/key>\s*<string>[^<]+<\/string>/,
     );
   });
+
+  it("runs as an accessory app without a Dock icon", async () => {
+    const infoPlist = await readFile(`${tauriDir}/Info.plist`, "utf8");
+    expect(infoPlist).toMatch(
+      /<key>LSUIElement<\/key>\s*<true\s*\/>/,
+    );
+
+    const rustEntryPoint = await readFile(`${tauriDir}/src/lib.rs`, "utf8");
+    expect(rustEntryPoint).toMatch(
+      /app\.set_activation_policy\(tauri::ActivationPolicy::Accessory\)/,
+    );
+    expect(rustEntryPoint).toMatch(/app\.set_dock_visibility\(false\)/);
+  });
 });
