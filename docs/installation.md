@@ -1,6 +1,6 @@
 # Source installation
 
-OpenClaw Pets desktop `0.5.1` with Gateway plugin `0.5.1` is a public beta.
+OpenClaw Pets desktop `0.5.1` with Gateway plugin `0.5.2` is a public beta.
 Install both from one clean source checkout. Official notarized macOS binaries
 are not published yet.
 
@@ -27,12 +27,20 @@ npm pack --pack-destination ../../dist
 Install the resulting archive with OpenClaw's local package installer:
 
 ```bash
-openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.5.1.tgz
+openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.5.2.tgz
 ```
 
 Configure ASR, routing, and the Journal Provider through the OpenClaw plugin
 configuration. Keep every Provider credential in an OpenClaw SecretRef. The
 desktop app never needs an ASR or Journal API key.
+
+Todo summarization and unmatched-speech classification run as isolated,
+zero-tool completions owned by `routing.targetAgentId`. In a multi-agent
+Gateway, explicitly trust this local plugin to use that configured owner:
+
+```bash
+openclaw config set plugins.entries.openclaw-pets.llm.allowAgentIdOverride true
+```
 
 Plugin installation or configuration changes may require a Gateway restart.
 Coordinate that restart with other active OpenClaw sessions.

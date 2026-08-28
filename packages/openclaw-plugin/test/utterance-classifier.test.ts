@@ -6,7 +6,7 @@ describe("OpenClaw utterance classifier", () => {
     const complete = vi.fn(async () => ({ text: '{"decision":"task_candidate"}' }));
     const classifier = createOpenClawUtteranceClassifier(
       { llm: { complete } as never },
-      { model: "example/lightweight", timeoutMs: 2_000 },
+      { agentId: "main", model: "example/lightweight", timeoutMs: 2_000 },
     );
 
     await expect(classifier.classify("请整理今天的试验数据")).resolves.toBe("task_candidate");
@@ -16,11 +16,11 @@ describe("OpenClaw utterance classifier", () => {
       temperature: 0,
       reasoning: "off",
       purpose: "openclaw-pets.utterance-route",
+      agentId: "main",
+      execution: { mode: "isolated-agent-runtime", timeoutMs: 2_000 },
       messages: [{ role: "user", content: expect.stringContaining("<transcript>") }],
     }));
     expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("tools");
-    expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("execution");
-    expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("agentId");
   });
 
   it("treats malformed or expanded model output as uncertain", async () => {

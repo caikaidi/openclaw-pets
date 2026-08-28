@@ -415,14 +415,11 @@ describe("OpenClaw Pets plugin", () => {
     expect(summarized).toEqual([["inside-window"]]);
   });
 
-  it("does not turn the configured task target into an unauthorized Todo completion override", async () => {
+  it("binds ambient Todo completion to the configured agent and isolated runtime", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
     const completionRequests: Array<Record<string, unknown>> = [];
     const complete = async (params: Record<string, unknown>) => {
       completionRequests.push(params);
-      if ("agentId" in params) {
-        throw new Error("Plugin LLM completion cannot override the target agent.");
-      }
       return {
         text: JSON.stringify({
           todos: [{
@@ -457,7 +454,10 @@ describe("OpenClaw Pets plugin", () => {
       },
     });
     expect(completionRequests).toHaveLength(1);
-    expect(completionRequests[0]).not.toHaveProperty("agentId");
+    expect(completionRequests[0]).toMatchObject({
+      agentId: "main",
+      execution: { mode: "isolated-agent-runtime", timeoutMs: 60_000 },
+    });
   });
 
   it("degrades context surfaces safely when a remote Journal is unavailable", async () => {

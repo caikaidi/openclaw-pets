@@ -27,7 +27,7 @@ describe("OpenClaw Journal todo summarizer", () => {
     }));
     const summarizer = createOpenClawTodoSummarizer(
       { llm: { complete } as never },
-      { model: "example/model", timeoutMs: 8_000, maxItems: 12 },
+      { agentId: "main", model: "example/model", timeoutMs: 8_000, maxItems: 12 },
     );
 
     await expect(summarizer.summarize({
@@ -46,11 +46,11 @@ describe("OpenClaw Journal todo summarizer", () => {
       reasoning: "off",
       temperature: 0,
       purpose: "openclaw-pets.todo-summary",
+      agentId: "main",
+      execution: { mode: "isolated-agent-runtime", timeoutMs: 8_000 },
       messages: [{ role: "user", content: expect.stringContaining("journal-1") }],
     }));
     expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("tools");
-    expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("execution");
-    expect(complete.mock.calls[0]?.[0]).not.toHaveProperty("agentId");
   });
 
   it("rejects model output that cites anything outside the Journal window", async () => {

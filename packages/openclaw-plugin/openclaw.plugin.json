@@ -2,7 +2,7 @@
   "id": "openclaw-pets",
   "name": "OpenClaw Pets",
   "description": "Backend state projection and user-controlled context for the OpenClaw Pets desktop companion.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "enabledByDefault": false,
   "activation": {
     "onStartup": true

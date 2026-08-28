@@ -19,9 +19,12 @@ still append observations and request a context preview through the scoped
 `pets.*` Gateway RPC methods.
 
 `pets.todo.generate` reads only the requested Journal window and runs a
-bounded direct completion with tools and execution disabled. Accepted Todo
-items must cite exact source observation ids; the plugin does not persist the
-derived list.
+bounded isolated-agent-runtime completion with no tools. Accepted Todo items
+must cite exact source observation ids; the plugin does not persist the
+derived list. Todo summarization and unmatched-speech classification use the
+configured `routing.targetAgentId`. Multi-agent Gateways must explicitly set
+`plugins.entries.openclaw-pets.llm.allowAgentIdOverride` to `true` so the
+trusted local plugin can bind these ambient completions to that owner.
 
 `plugins.entries.openclaw-pets.config.journal.provider` defaults to `local`.
 Set it to `http` with a `baseUrl` and SecretRef-backed `apiKey` to use a remote
