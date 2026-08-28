@@ -28,6 +28,18 @@ describe("macOS microphone bundle contract", () => {
     );
   });
 
+  it("declares user-initiated Apple Calendar and Reminders automation", async () => {
+    const infoPlist = await readFile(`${tauriDir}/Info.plist`, "utf8");
+    const entitlements = await readFile(`${tauriDir}/Entitlements.plist`, "utf8");
+
+    expect(infoPlist).toMatch(
+      /<key>NSAppleEventsUsageDescription<\/key>\s*<string>[^<]+<\/string>/,
+    );
+    expect(entitlements).toMatch(
+      /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\s*\/>/,
+    );
+  });
+
   it("runs as an accessory app without a Dock icon", async () => {
     const infoPlist = await readFile(`${tauriDir}/Info.plist`, "utf8");
     expect(infoPlist).toMatch(

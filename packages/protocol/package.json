@@ -1,6 +1,6 @@
 {
   "name": "@openclaw-pets/protocol",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Versioned RPC and semantic-state protocol for OpenClaw Pets",
   "type": "module",
   "license": "Apache-2.0",

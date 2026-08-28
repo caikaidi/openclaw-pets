@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   layoutFor,
+  panelStatusCenterX,
   petViewportForScale,
   repositionForLayout,
   type WindowGeometry,
@@ -100,6 +101,22 @@ describe("pet window layout", () => {
     });
 
     expect(closed.x + closed.layout.pet.x * 2).toBe(opened.x + opened.layout.pet.x * 2);
+  });
+
+  it("keeps the panel recording status pill inside an edge-aligned native window", () => {
+    const collapsed = layoutFor(33, "none");
+    const expanded = layoutFor(33, "panel");
+    const opened = repositionForLayout(
+      { x: 1_640, y: 700, width: collapsed.width, height: collapsed.height },
+      collapsed,
+      expanded,
+      2,
+      { x: 0, y: 0, width: 1_800, height: 1_200 },
+    );
+    const center = panelStatusCenterX(opened.layout);
+
+    expect(center - 125).toBeGreaterThanOrEqual(8);
+    expect(center + 125).toBeLessThanOrEqual(opened.layout.width - 8);
   });
 
   it.each(["status", "decision", "panel"] as const)("reserves a feathering gutter around the %s overlay", (overlay) => {

@@ -31,7 +31,9 @@ crashes from Gateway.
 | ASR Provider selection and credentials | plugin configuration / OpenClaw SecretRef |
 | Activity persistence | configured Journal Provider |
 | Journal Provider selection and memory corpus adapter | plugin |
+| Journal-only Todo summarization | plugin direct-completion runtime |
 | Microphone capture and compressed batch upload | desktop |
+| Explicit Apple Calendar / Reminders export | desktop native bridge |
 | Transparent window and interaction | desktop |
 | Semantic-state-to-animation mapping | Pet Pack |
 | Private key and Gateway tokens | operating-system credential store |
@@ -131,6 +133,27 @@ Journal updates preserve provenance and occurrence time while recording an
 edit timestamp and a new opaque revision. Local and HTTP Providers implement
 the same optimistic-lock contract so simultaneous companion edits cannot
 silently replace each other.
+
+## Todo and Apple export
+
+The desktop requests the recent 30 complete local calendar dates through
+`pets.todo.generate`. The plugin passes only those observations, the current
+time, and the user's time zone to a direct completion with tools, execution,
+delivery, and reasoning disabled. Model output is accepted only when every
+Todo cites exact observation ids from that window. Todo is derived UI, not a
+second persistence store, and regenerating it reads the Journal again.
+
+The macOS companion exports one selected Todo at a time through fixed
+AppleScript programs whose user content is passed as arguments rather than
+interpolated as code. Calendar items use the explicit Journal due time when
+available; otherwise the UI displays the deterministic next-work-slot time
+before export. Reminders without an explicit due time remain unscheduled.
+macOS Automation consent remains the authority for both applications.
+
+The sprite renderer reads the active frame's alpha channel for pointer hit
+testing. Transparent frame padding keeps the normal cursor and cannot start a
+recording, drag, or context menu; the built-in vector pet uses a bounded shape
+target. The native window still grows only when an overlay is present.
 
 ## Imported Pet Packs
 

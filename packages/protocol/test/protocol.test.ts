@@ -25,8 +25,8 @@ describe("Pets Protocol", () => {
       text: "Rejected source",
     })).toBe(false);
   });
-  it("exposes the versioned v3 editable Journal control surface", () => {
-    expect(PETS_PROTOCOL_VERSION).toBe(3);
+  it("exposes the versioned v4 Journal-derived Todo control surface", () => {
+    expect(PETS_PROTOCOL_VERSION).toBe(4);
     expect(PETS_RPC).toEqual({
       capabilities: "pets.capabilities",
       status: "pets.status",
@@ -34,6 +34,7 @@ describe("Pets Protocol", () => {
       activityUpdate: "pets.activity.update",
       activityList: "pets.activity.list",
       activityDelete: "pets.activity.delete",
+      todoGenerate: "pets.todo.generate",
       transcriptionCreate: "pets.transcription.create",
       utteranceRoute: "pets.utterance.route",
       contextPreview: "pets.context.preview",

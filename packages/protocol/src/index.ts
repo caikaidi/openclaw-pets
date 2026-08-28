@@ -1,4 +1,4 @@
-export const PETS_PROTOCOL_VERSION = 3 as const;
+export const PETS_PROTOCOL_VERSION = 4 as const;
 export const PETS_PLUGIN_ID = "openclaw-pets" as const;
 
 export const PETS_RPC = {
@@ -8,6 +8,7 @@ export const PETS_RPC = {
   activityUpdate: "pets.activity.update",
   activityList: "pets.activity.list",
   activityDelete: "pets.activity.delete",
+  todoGenerate: "pets.todo.generate",
   transcriptionCreate: "pets.transcription.create",
   utteranceRoute: "pets.utterance.route",
   contextPreview: "pets.context.preview",
@@ -151,6 +152,22 @@ export type ActivityPage = {
   observations: ActivityObservation[];
   gaps: JournalGap[];
   nextCursor?: string;
+};
+
+export type TodoItem = {
+  id: string;
+  title: string;
+  notes?: string;
+  dueAt?: string;
+  sourceObservationIds: string[];
+};
+
+export type TodoSummary = {
+  status: JournalStatus;
+  generatedAt: string;
+  observationsRead: number;
+  todos: TodoItem[];
+  gaps: JournalGap[];
 };
 
 export const UTTERANCE_ROUTES = ["context", "agent", "confirm"] as const;

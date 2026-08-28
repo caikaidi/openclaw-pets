@@ -15,6 +15,7 @@ use std::path::Path;
 use tauri::Manager;
 use walkdir::WalkDir;
 
+mod apple_tasks;
 mod pet_packs;
 
 const KEYRING_SERVICE: &str = "dev.openclaw.pets";
@@ -198,6 +199,20 @@ fn remove_pet_pack(app: tauri::AppHandle, key: String) -> Result<bool, String> {
     pet_packs::remove(&app_data_dir(&app)?, &key)
 }
 
+#[tauri::command]
+async fn add_todo_to_apple_calendar(input: apple_tasks::CalendarTodoInput) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || apple_tasks::add_to_calendar(input))
+        .await
+        .map_err(|_| "Apple Calendar task was interrupted".to_string())?
+}
+
+#[tauri::command]
+async fn add_todo_to_apple_reminders(input: apple_tasks::ReminderTodoInput) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || apple_tasks::add_to_reminders(input))
+        .await
+        .map_err(|_| "Apple Reminders task was interrupted".to_string())?
+}
+
 fn read_pet_pack_root(root: &Path) -> Result<PetPackPayload, String> {
     let root_metadata =
         fs::symlink_metadata(root).map_err(|_| "Pet Pack root is unavailable".to_string())?;
@@ -342,6 +357,8 @@ pub fn run() {
             read_pet_pack,
             activate_pet_pack,
             remove_pet_pack,
+            add_todo_to_apple_calendar,
+            add_todo_to_apple_reminders,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run OpenClaw Pets");

@@ -5,6 +5,7 @@ import type {
 import type { AsrProvider } from "../../src/asr-provider.js";
 import type { JournalProvider } from "../../src/journal-provider.js";
 import { registerOpenClawPets, type PetsPluginApi } from "../../src/plugin.js";
+import type { TodoSummarizer } from "../../src/todo-summarizer.js";
 import type { UtteranceClassifier } from "../../src/utterance-classifier.js";
 
 export type GatewayHandler = Parameters<OpenClawPluginApi["registerGatewayMethod"]>[1];
@@ -13,7 +14,12 @@ type MemorySupplement = Parameters<OpenClawPluginApi["registerMemoryCorpusSupple
 
 export function createApi(
   stateDirectory: string,
-  options: { asr?: AsrProvider; journal?: JournalProvider; classifier?: UtteranceClassifier } = {},
+  options: {
+    asr?: AsrProvider;
+    journal?: JournalProvider;
+    classifier?: UtteranceClassifier;
+    todoSummarizer?: TodoSummarizer;
+  } = {},
 ) {
   const methods = new Map<string, GatewayHandler>();
   let service: PluginService | undefined;

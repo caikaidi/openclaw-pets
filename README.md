@@ -10,14 +10,14 @@ This repository is a **greenfield rewrite**. It does not fork or depend on the
 earlier desktop-pet repository used during product discovery, and it does not
 include privately evaluated discovery artwork.
 
-> Status: `0.4.0` public beta. Source builds are supported. Official notarized
+> Status: `0.5.0` public beta. Source builds are supported. Official notarized
 > macOS binaries and automated release publishing are not available yet.
 
 ## Architecture
 
 ```text
 ┌──────────────────────── Native desktop companion ────────────────────────┐
-│ transparent window · push-to-talk · confirmation UI · Pet Pack renderer │
+│ transparent window · push-to-talk · Todo/Apple export · Pet Pack renderer│
 └───────────────────────────────┬───────────────────────────────────────────┘
                                 │ official Gateway WebSocket protocol
 ┌───────────────────────────────▼───────────────────────────────────────────┐
@@ -58,6 +58,9 @@ second model router, tool executor, or competing memory system.
   and asks the user only for likely task requests. It never auto-executes.
 - User-controlled Journal with replaceable local/HTTP Providers, pause,
   cross-source listing, optimistic-lock editing, and retract operations.
+- A right-click Todo view generated only from the recent 30-day Journal by a
+  bounded, tool-free model call. Each item cites its source observations and
+  can be added explicitly to Apple Calendar or Reminders.
 - Optional, bounded OpenClaw prompt supplementation; disabled by default.
 - Code-free Pet Packs with path, type, geometry, and SHA-256 validation.
   Petdex ZIPs or directories downloaded from codex-pets.net can be imported,
@@ -65,7 +68,9 @@ second model router, tool executor, or competing memory system.
 - Device-bound Gateway authentication with the Ed25519 private key and tokens
   stored in the operating-system credential store.
 - A transparent window whose status and decision surfaces expand above the
-  pet without moving it away from the physical screen edge.
+  pet without moving it away from the physical screen edge. Recording status
+  remains visible between an open menu and the pet, while sprite interaction
+  follows the active frame's opaque pixels instead of its transparent box.
 - Multiple independently paired companions can share one remote Gateway and
   Journal while keeping recording, task state, animation, and active Pet Pack
   local to each device.
@@ -113,6 +118,8 @@ source files, environment examples, issue reports, or logs.
 - Capturing can be paused from the desktop app.
 - Individual observations can be retracted through the configured Journal
   Provider. Physical retention is controlled by that Provider's policy.
+- Apple Calendar and Reminders receive only the Todo whose button the user
+  clicks; macOS controls the corresponding Automation permission.
 - Pet Packs cannot contain JavaScript, HTML, SVG, native code, shaders, or
   external URLs.
 

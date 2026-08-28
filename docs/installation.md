@@ -1,6 +1,6 @@
 # Source installation
 
-OpenClaw Pets `0.4.0` is a public beta. Install the Gateway plugin and desktop
+OpenClaw Pets `0.5.0` is a public beta. Install the Gateway plugin and desktop
 app from one clean source checkout. Official notarized macOS binaries are not
 published yet.
 
@@ -27,7 +27,7 @@ npm pack --pack-destination ../../dist
 Install the resulting archive with OpenClaw's local package installer:
 
 ```bash
-openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.4.0.tgz
+openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.5.0.tgz
 ```
 
 Configure ASR, routing, and the Journal Provider through the OpenClaw plugin

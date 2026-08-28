@@ -72,6 +72,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+export function panelStatusCenterX(layout: PetWindowLayout): number {
+  const halfWidth = 125;
+  const gutter = 8;
+  return clamp(
+    layout.pet.x + layout.pet.width / 2,
+    halfWidth + gutter,
+    layout.width - halfWidth - gutter,
+  );
+}
+
 export function repositionForLayout(
   current: WindowGeometry,
   currentLayout: PetWindowLayout,

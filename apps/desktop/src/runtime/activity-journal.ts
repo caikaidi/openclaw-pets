@@ -8,6 +8,15 @@ export function todayActivityWindow(now = new Date()): { startAt: string; endAt:
   return { startAt: start.toISOString(), endAt: end.toISOString() };
 }
 
+export function recentTodoWindow(now = new Date()): { startAt: string; endAt: string } {
+  const end = new Date(now);
+  end.setHours(0, 0, 0, 0);
+  end.setDate(end.getDate() + 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 30);
+  return { startAt: start.toISOString(), endAt: end.toISOString() };
+}
+
 const sourceLabels: Partial<Record<ActivitySource, string>> = {
   voice: "桌宠语音",
   text: "桌宠文字",

@@ -18,6 +18,11 @@ Automatic context injection is disabled by default. The desktop companion can
 still append observations and request a context preview through the scoped
 `pets.*` Gateway RPC methods.
 
+`pets.todo.generate` reads only the requested Journal window and runs a
+bounded direct completion with tools and execution disabled. Accepted Todo
+items must cite exact source observation ids; the plugin does not persist the
+derived list.
+
 `plugins.entries.openclaw-pets.config.journal.provider` defaults to `local`.
 Set it to `http` with a `baseUrl` and SecretRef-backed `apiKey` to use a remote
 implementation of the [Journal Provider contract](../../docs/journal-provider.md).

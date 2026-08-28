@@ -5,6 +5,8 @@ import type {
   AsrCapability,
   PetSemanticState,
   PetStatus,
+  TodoItem,
+  TodoSummary,
   TranscriptionResult,
   UtteranceRoute,
 } from "@openclaw-pets/protocol";
@@ -18,8 +20,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import PetCanvas from "./components/PetCanvas.vue";
 import SpritePet from "./components/SpritePet.vue";
 import { BatchRecorder } from "./runtime/batch-recorder.js";
-import { activityGapMessage, activitySourceLabel, todayActivityWindow } from "./runtime/activity-journal.js";
+import {
+  activityGapMessage,
+  activitySourceLabel,
+  recentTodoWindow,
+  todayActivityWindow,
+} from "./runtime/activity-journal.js";
 import { ActivityEditConflictError, saveActivityEdit } from "./runtime/activity-editor.js";
+import {
+  addTodoToAppleCalendar,
+  addTodoToAppleReminders,
+  suggestedCalendarWindow,
+} from "./runtime/apple-task-export.js";
 import { transcribeRecording } from "./runtime/batch-transcription.js";
 import { asrCapabilityLabel, isCompatibleCapabilities } from "./runtime/asr-status.js";
 import {
@@ -41,15 +53,22 @@ import {
   PET_SCALES,
   isPetScale,
   layoutFor,
+  panelStatusCenterX,
   type PetOverlay,
   type PetScale,
   type PetWindowLayout,
 } from "./runtime/window-layout.js";
 import { PetWindowController } from "./runtime/window-controller.js";
 
-type PanelTab = "activity" | "settings";
+type PanelTab = "activity" | "todo" | "settings";
 type ActivityDeleteResponse = { deleted?: boolean };
-type CapabilitiesResponse = { protocolVersion?: unknown; features?: { batchTranscription?: AsrCapability } };
+type CapabilitiesResponse = {
+  protocolVersion?: unknown;
+  features?: {
+    batchTranscription?: AsrCapability;
+    todoSummary?: { available?: boolean; maxItems?: number };
+  };
+};
 type PendingDecision = Pick<TranscriptionResult, "interactionId" | "provider"> & {
   text: string;
   transcript?: string;
@@ -106,12 +125,21 @@ const currentInteractionId = ref<string | undefined>(
   localStorage.getItem("openclaw-pets.active-interaction") ?? undefined,
 );
 const asrCapability = ref<AsrCapability>({ available: false, health: "unconfigured" });
+const todoAvailable = ref(false);
 const recording = ref(false);
 const decision = ref<PendingDecision>();
 const panel = ref<PanelTab | undefined>(connectionConfigured ? undefined : "settings");
 const activities = ref<ActivityObservation[]>([]);
 const activityCursor = ref<string>();
 const activityWarning = ref("");
+const todos = ref<TodoItem[]>([]);
+const todoWarning = ref("");
+const todoGeneratedAt = ref<string>();
+const todoObservationsRead = ref(0);
+const todoLoading = ref(false);
+const appleExportBusy = ref<string>();
+const calendarTodoIds = ref(new Set<string>());
+const reminderTodoIds = ref(new Set<string>());
 const editingActivityId = ref<string>();
 const editingActivityText = ref("");
 const savingActivityId = ref<string>();
@@ -156,6 +184,8 @@ const rootStyle = computed(() => ({
   "--overlay-width": `${renderedLayout.value.overlay?.width ?? 0}px`,
   "--overlay-height": `${renderedLayout.value.overlay?.height ?? 0}px`,
   "--overlay-anchor-x": `${renderedLayout.value.overlayAnchorX ?? 0}px`,
+  "--panel-status-left": `${panelStatusCenterX(renderedLayout.value)}px`,
+  "--panel-status-top": `${(renderedLayout.value.overlay?.y ?? 0) + (renderedLayout.value.overlay?.height ?? 0) + 6}px`,
 }));
 
 // tauri.conf.json always launches at the 33% status layout before Vue restores preferences.
@@ -175,7 +205,9 @@ function showTransient(message: string, duration = 2_800): void {
 }
 
 function readableError(cause: unknown): string {
-  return cause instanceof Error ? cause.message.slice(0, 180) : "操作失败";
+  if (cause instanceof Error) return cause.message.slice(0, 180);
+  if (typeof cause === "string" && cause.trim()) return cause.trim().slice(0, 180);
+  return "操作失败";
 }
 
 function showTerminal(state: Extract<InteractionDisplayState, "succeeded" | "failed">): void {
@@ -194,13 +226,16 @@ async function refreshCapabilities(): Promise<void> {
     if (!isCompatibleCapabilities(capabilities)) {
       pluginAvailable.value = false;
       asrCapability.value = { available: false, health: "unconfigured" };
+      todoAvailable.value = false;
       showTransient("OpenClaw Pets 插件协议不兼容，请升级插件", 5_000);
       return;
     }
     asrCapability.value = capabilities.features?.batchTranscription
       ?? { available: false, health: "unconfigured" };
+    todoAvailable.value = capabilities.features?.todoSummary?.available === true;
   } catch {
     asrCapability.value = { available: false, health: "unconfigured" };
+    todoAvailable.value = false;
   }
 }
 
@@ -237,6 +272,73 @@ async function refreshActivities(append = false): Promise<void> {
   } catch (cause) {
     activityWarning.value = "流水账暂时无法完整读取";
     showTransient(readableError(cause));
+  }
+}
+
+async function refreshTodos(): Promise<void> {
+  if (todoLoading.value) return;
+  if (!gateway?.connected || !pluginAvailable.value) {
+    todoWarning.value = "OpenClaw Pets 插件尚未连接";
+    return;
+  }
+  if (!todoAvailable.value) {
+    todoWarning.value = "当前插件不支持 Todo 总结，请升级 Gateway 插件";
+    return;
+  }
+  todoLoading.value = true;
+  todoWarning.value = "";
+  try {
+    const response = await gateway.request<TodoSummary>(PETS_RPC.todoGenerate, {
+      ...recentTodoWindow(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    todos.value = response.todos;
+    todoGeneratedAt.value = response.generatedAt;
+    todoObservationsRead.value = response.observationsRead;
+    calendarTodoIds.value = new Set();
+    reminderTodoIds.value = new Set();
+    const reasons = response.gaps.map((gap) => gap.reason).filter(Boolean).join("；");
+    if (response.status !== "ok" || response.gaps.length > 0) {
+      todoWarning.value = `Todo 可能不完整${reasons ? `：${reasons}` : ""}`;
+    }
+  } catch (cause) {
+    todoWarning.value = readableError(cause);
+  } finally {
+    todoLoading.value = false;
+  }
+}
+
+function todoDueLabel(todo: TodoItem): string {
+  if (todo.dueAt) return `截止 ${new Date(todo.dueAt).toLocaleString()}`;
+  const suggested = suggestedCalendarWindow(todo, new Date(todoGeneratedAt.value ?? Date.now()));
+  return `未注明时间 · 日历默认 ${suggested.start.toLocaleString()}`;
+}
+
+async function exportTodoToCalendar(todo: TodoItem): Promise<void> {
+  if (appleExportBusy.value) return;
+  appleExportBusy.value = `calendar:${todo.id}`;
+  try {
+    const scheduled = await addTodoToAppleCalendar(todo, new Date(todoGeneratedAt.value ?? Date.now()));
+    calendarTodoIds.value = new Set(calendarTodoIds.value).add(todo.id);
+    showTransient(scheduled.inferred ? "已加入 Apple 日历（使用卡片显示的默认时间）" : "已加入 Apple 日历");
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    appleExportBusy.value = undefined;
+  }
+}
+
+async function exportTodoToReminders(todo: TodoItem): Promise<void> {
+  if (appleExportBusy.value) return;
+  appleExportBusy.value = `reminder:${todo.id}`;
+  try {
+    await addTodoToAppleReminders(todo);
+    reminderTodoIds.value = new Set(reminderTodoIds.value).add(todo.id);
+    showTransient("已加入 Apple 提醒事项");
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  } finally {
+    appleExportBusy.value = undefined;
   }
 }
 
@@ -423,6 +525,7 @@ async function dispatchUtterance(transcription: PendingDecision, requestedRoute?
       },
     );
     if (result.kind === "confirm") {
+      panel.value = undefined;
       decision.value = { ...transcription, text: result.text, transcript: result.transcript };
       interactionState.value = "needs_input";
       return;
@@ -431,6 +534,7 @@ async function dispatchUtterance(transcription: PendingDecision, requestedRoute?
     showTransient(result.kind === "context" ? "已补充到 OpenClaw 上下文" : "任务已交给 OpenClaw");
     if (result.kind === "context") {
       await refreshActivities();
+      if (panel.value === "todo") await refreshTodos();
       showTerminal("succeeded");
     } else {
       interactionState.value = undefined;
@@ -506,6 +610,7 @@ function selectScale(value: PetScale): void {
 async function openPanel(tab: PanelTab): Promise<void> {
   panel.value = tab;
   if (tab === "activity") await refreshActivities();
+  if (tab === "todo") await refreshTodos();
   if (tab === "settings") await refreshInstalledPetPacks();
 }
 
@@ -562,6 +667,15 @@ function onPetPointerUp(): void {
   if (shouldClick) void toggleRecording();
 }
 
+function onPetPointerCancel(): void {
+  pointerStart = undefined;
+  dragging = false;
+}
+
+function onPetContextMenu(): void {
+  void openPanel("activity");
+}
+
 watch([scale, overlay], ([nextScale, nextOverlay]) => {
   void windowController.apply(nextScale, nextOverlay, async (nextLayout) => {
     renderedLayout.value = nextLayout;
@@ -579,7 +693,7 @@ onMounted(() => {
   if (!connectionConfigured) return;
   gateway = new PetsGatewayClient({
     url: gatewayUrl.value,
-    appVersion: "0.4.0",
+    appVersion: "0.5.0",
     onStateChange: (state, message) => {
       connection.value = state;
       detail.value = message ?? "";
@@ -604,6 +718,7 @@ onBeforeUnmount(() => {
       <header class="panel-header">
         <nav>
           <button :class="{ active: panel === 'activity' }" @click="openPanel('activity')">活动记录</button>
+          <button :class="{ active: panel === 'todo' }" @click="openPanel('todo')">Todo</button>
           <button :class="{ active: panel === 'settings' }" @click="openPanel('settings')">设置</button>
         </nav>
         <button class="icon-button" aria-label="关闭" @click="closePanel">×</button>
@@ -638,6 +753,44 @@ onBeforeUnmount(() => {
           <small>{{ [activitySourceLabel(item.source), item.asrProvider, item.route].filter(Boolean).join(" · ") }}</small>
         </article>
         <button v-if="activityCursor" class="secondary load-more" @click="refreshActivities(true)">加载更早记录</button>
+      </div>
+
+      <div v-else-if="panel === 'todo'" class="panel-body todo-list">
+        <div class="todo-summary-meta">
+          <div>
+            <strong>从最近 30 天流水账生成</strong>
+            <small v-if="todoGeneratedAt">
+              {{ todoObservationsRead }} 条来源 · {{ new Date(todoGeneratedAt).toLocaleTimeString() }} 更新
+            </small>
+          </div>
+          <button class="secondary" :disabled="todoLoading" @click="refreshTodos">
+            {{ todoLoading ? "总结中…" : "重新总结" }}
+          </button>
+        </div>
+        <p v-if="todoWarning" class="activity-warning">{{ todoWarning }}</p>
+        <p v-if="todoLoading && todos.length === 0" class="empty">正在从流水账总结 Todo…</p>
+        <p v-else-if="!todoLoading && todos.length === 0 && !todoWarning" class="empty">
+          最近 30 天流水账里没有未完成待办。
+        </p>
+        <article v-for="todo in todos" :key="todo.id" class="todo-card">
+          <div class="todo-copy">
+            <strong>{{ todo.title }}</strong>
+            <p v-if="todo.notes">{{ todo.notes }}</p>
+            <small>{{ todoDueLabel(todo) }} · 来源 {{ todo.sourceObservationIds.length }} 条流水</small>
+          </div>
+          <div class="todo-actions">
+            <button
+              class="secondary apple-action"
+              :disabled="Boolean(appleExportBusy) || calendarTodoIds.has(todo.id)"
+              @click="exportTodoToCalendar(todo)"
+            >{{ calendarTodoIds.has(todo.id) ? "已加入日历" : "加入 Apple 日历" }}</button>
+            <button
+              class="primary apple-action"
+              :disabled="Boolean(appleExportBusy) || reminderTodoIds.has(todo.id)"
+              @click="exportTodoToReminders(todo)"
+            >{{ reminderTodoIds.has(todo.id) ? "已加入提醒" : "加入提醒事项" }}</button>
+          </div>
+        </article>
       </div>
 
       <div v-else class="panel-body settings-form">
@@ -712,7 +865,12 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-else-if="decision" class="decision-card" @pointerdown.stop>
+    <section v-if="panel && statusText" class="panel-status" role="status">
+      <span class="state-dot" :data-state="displayState" />
+      <strong>{{ statusText }}</strong>
+    </section>
+
+    <section v-if="!panel && decision" class="decision-card" @pointerdown.stop>
       <p class="eyebrow">如何处理这段语音？</p>
       <p class="decision-text">{{ decision.text }}</p>
       <div class="decision-actions">
@@ -726,7 +884,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-else-if="statusText" class="status-bubble" role="status">
+    <section v-else-if="!panel && statusText" class="status-bubble" role="status">
       <span class="state-dot" :data-state="displayState" />
       <div>
         <strong>{{ statusText }}</strong>
@@ -734,16 +892,26 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div
-      class="pet-hit-area"
-      @pointerdown="onPetPointerDown"
-      @pointermove="onPetPointerMove"
-      @pointerup="onPetPointerUp"
-      @pointercancel="onPetPointerUp"
-      @contextmenu.prevent="openPanel('activity')"
-    >
-      <SpritePet v-if="renderedPetPack" :state="renderedPetState" :pack="renderedPetPack" />
-      <PetCanvas v-else :state="displayState" />
+    <div class="pet-hit-area">
+      <SpritePet
+        v-if="renderedPetPack"
+        :state="renderedPetState"
+        :pack="renderedPetPack"
+        @pet-pointer-down="onPetPointerDown"
+        @pet-pointer-move="onPetPointerMove"
+        @pet-pointer-up="onPetPointerUp"
+        @pet-pointer-cancel="onPetPointerCancel"
+        @pet-context-menu="onPetContextMenu"
+      />
+      <PetCanvas
+        v-else
+        :state="displayState"
+        @pet-pointer-down="onPetPointerDown"
+        @pet-pointer-move="onPetPointerMove"
+        @pet-pointer-up="onPetPointerUp"
+        @pet-pointer-cancel="onPetPointerCancel"
+        @pet-context-menu="onPetContextMenu"
+      />
     </div>
   </main>
 </template>

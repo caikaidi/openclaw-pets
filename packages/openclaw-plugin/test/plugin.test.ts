@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { PETS_EVENT, PETS_PLUGIN_ID } from "@openclaw-pets/protocol";
 import type { AsrProvider } from "../src/asr-provider.js";
 import type { JournalProvider } from "../src/journal-provider.js";
+import type { TodoSummarizer } from "../src/todo-summarizer.js";
 import type { UtteranceClassifier } from "../src/utterance-classifier.js";
 import { createApi, deliverAgentEvent, request } from "./helpers/plugin-harness.js";
 
@@ -108,7 +109,7 @@ describe("OpenClaw Pets plugin", () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
     const { methods } = createApi(directory);
     const capabilities = await request(methods, "pets.capabilities");
-    expect(capabilities).toMatchObject({ ok: true, payload: { protocolVersion: 3 } });
+    expect(capabilities).toMatchObject({ ok: true, payload: { protocolVersion: 4 } });
 
     const observation = {
       id: "obs-rpc-1",
@@ -369,6 +370,49 @@ describe("OpenClaw Pets plugin", () => {
       startAt: "2026-08-16T16:00:00.000Z",
       endAt: "2026-08-17T16:00:00.000Z",
     });
+  });
+
+  it("generates Todo only from observations inside the requested Journal window", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
+    const summarized: string[][] = [];
+    const todoSummarizer: TodoSummarizer = {
+      summarize: async (input) => {
+        summarized.push(input.observations.map((item) => item.id));
+        return [{
+          id: "journal-todo-1-inside-window",
+          title: "整理测试结论",
+          sourceObservationIds: ["inside-window"],
+        }];
+      },
+    };
+    const { methods } = createApi(directory, { todoSummarizer });
+    for (const observation of [{
+      id: "inside-window",
+      occurredAt: "2026-08-28T03:00:00.000Z",
+      source: "voice",
+      text: "整理今天的测试结论",
+    }, {
+      id: "outside-window",
+      occurredAt: "2026-08-27T03:00:00.000Z",
+      source: "voice",
+      text: "昨天的旧任务",
+    }]) {
+      await request(methods, "pets.activity.append", { observation });
+    }
+
+    expect(await request(methods, "pets.todo.generate", {
+      startAt: "2026-08-28T00:00:00.000Z",
+      endAt: "2026-08-29T00:00:00.000Z",
+      timeZone: "Asia/Shanghai",
+    })).toMatchObject({
+      ok: true,
+      payload: {
+        status: "ok",
+        observationsRead: 1,
+        todos: [{ title: "整理测试结论", sourceObservationIds: ["inside-window"] }],
+      },
+    });
+    expect(summarized).toEqual([["inside-window"]]);
   });
 
   it("degrades context surfaces safely when a remote Journal is unavailable", async () => {

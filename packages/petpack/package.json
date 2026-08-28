@@ -1,6 +1,6 @@
 {
   "name": "@openclaw-pets/petpack",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Validation and rendering metadata for inert OpenClaw Pet Packs",
   "type": "module",
   "license": "Apache-2.0",
