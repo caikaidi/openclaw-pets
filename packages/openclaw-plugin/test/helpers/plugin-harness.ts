@@ -19,6 +19,7 @@ export function createApi(
     journal?: JournalProvider;
     classifier?: UtteranceClassifier;
     todoSummarizer?: TodoSummarizer;
+    runtime?: OpenClawPluginApi["runtime"];
   } = {},
 ) {
   const methods = new Map<string, GatewayHandler>();
@@ -50,6 +51,7 @@ export function createApi(
       },
     },
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    ...(options.runtime ? { runtime: options.runtime } : {}),
   };
   registerOpenClawPets(api, options);
   return {

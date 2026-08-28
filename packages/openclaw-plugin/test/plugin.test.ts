@@ -415,6 +415,51 @@ describe("OpenClaw Pets plugin", () => {
     expect(summarized).toEqual([["inside-window"]]);
   });
 
+  it("does not turn the configured task target into an unauthorized Todo completion override", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
+    const completionRequests: Array<Record<string, unknown>> = [];
+    const complete = async (params: Record<string, unknown>) => {
+      completionRequests.push(params);
+      if ("agentId" in params) {
+        throw new Error("Plugin LLM completion cannot override the target agent.");
+      }
+      return {
+        text: JSON.stringify({
+          todos: [{
+            title: "整理测试结论",
+            notes: null,
+            dueAt: null,
+            sourceObservationIds: ["inside-window"],
+          }],
+        }),
+      };
+    };
+    const { methods } = createApi(directory, {
+      runtime: { llm: { complete } } as never,
+    });
+    await request(methods, "pets.activity.append", {
+      observation: {
+        id: "inside-window",
+        occurredAt: "2026-08-28T03:00:00.000Z",
+        source: "voice",
+        text: "整理今天的测试结论",
+      },
+    });
+
+    expect(await request(methods, "pets.todo.generate", {
+      startAt: "2026-08-28T00:00:00.000Z",
+      endAt: "2026-08-29T00:00:00.000Z",
+      timeZone: "Asia/Shanghai",
+    })).toMatchObject({
+      ok: true,
+      payload: {
+        todos: [{ title: "整理测试结论" }],
+      },
+    });
+    expect(completionRequests).toHaveLength(1);
+    expect(completionRequests[0]).not.toHaveProperty("agentId");
+  });
+
   it("degrades context surfaces safely when a remote Journal is unavailable", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openclaw-pets-plugin-"));
     const unavailable = async () => { throw new Error("remote journal unavailable"); };

@@ -150,7 +150,6 @@ export function registerOpenClawPets(
   const classifier = dependencies.classifier
     ?? (config.routing.classifier.enabled && api.runtime
       ? createOpenClawUtteranceClassifier(api.runtime, {
-          ...(config.routing.targetAgentId ? { agentId: config.routing.targetAgentId } : {}),
           ...(config.routing.classifier.model ? { model: config.routing.classifier.model } : {}),
           timeoutMs: config.routing.classifier.timeoutMs,
         })
@@ -158,7 +157,6 @@ export function registerOpenClawPets(
   const todoSummarizer = dependencies.todoSummarizer
     ?? (api.runtime
       ? createOpenClawTodoSummarizer(api.runtime, {
-          ...(config.routing.targetAgentId ? { agentId: config.routing.targetAgentId } : {}),
           ...(config.routing.classifier.model ? { model: config.routing.classifier.model } : {}),
           timeoutMs: Math.max(12_000, config.routing.classifier.timeoutMs),
           maxItems: MAX_TODO_ITEMS,
