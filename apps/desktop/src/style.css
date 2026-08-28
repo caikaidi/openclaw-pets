@@ -181,6 +181,8 @@ button.secondary { background: #f2e8e1; }
 .segmented button.active { background: #fff; color: #3d2d25; box-shadow: 0 2px 6px rgb(86 47 31 / 12%); }
 .toggle[aria-pressed="true"] { color: #287149; background: #def1e5; }
 .settings-actions { margin-top: auto; display: flex; justify-content: flex-end; gap: 7px; }
+.app-actions { padding-top: 10px; border-top: 1px solid rgb(111 71 52 / 10%); }
+.quit-app { width: 100%; }
 .pet-pack-settings { display: grid; gap: 8px; padding: 10px; border: 1px solid rgb(111 71 52 / 11%); border-radius: 14px; }
 .pet-pack-import-actions, .pet-pack-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .pet-pack-import-actions button, .pet-pack-actions button { padding: 6px 8px; font-size: 10px; }
@@ -211,6 +213,7 @@ button.danger { color: #a04b3b; }
   .todo-card { background: rgb(73 56 51 / 35%); border-color: rgb(255 255 255 / 8%); }
   .todo-copy p, .panel-status { color: #dfcec6; }
   .pet-pack-settings { border-color: rgb(255 255 255 / 10%); }
+  .app-actions { border-color: rgb(255 255 255 / 10%); }
   .pet-pack-list article { background: rgb(73 56 51 / 60%); }
 }
 

@@ -1,6 +1,6 @@
 # Source installation
 
-OpenClaw Pets desktop `0.5.0` with Gateway plugin `0.5.1` is a public beta.
+OpenClaw Pets desktop `0.5.1` with Gateway plugin `0.5.1` is a public beta.
 Install both from one clean source checkout. Official notarized macOS binaries
 are not published yet.
 

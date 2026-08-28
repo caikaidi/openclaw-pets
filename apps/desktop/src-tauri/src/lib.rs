@@ -213,6 +213,11 @@ async fn add_todo_to_apple_reminders(input: apple_tasks::ReminderTodoInput) -> R
         .map_err(|_| "Apple Reminders task was interrupted".to_string())?
 }
 
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 fn read_pet_pack_root(root: &Path) -> Result<PetPackPayload, String> {
     let root_metadata =
         fs::symlink_metadata(root).map_err(|_| "Pet Pack root is unavailable".to_string())?;
@@ -359,6 +364,7 @@ pub fn run() {
             remove_pet_pack,
             add_todo_to_apple_calendar,
             add_todo_to_apple_reminders,
+            quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run OpenClaw Pets");

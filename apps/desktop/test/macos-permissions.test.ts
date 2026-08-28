@@ -52,4 +52,12 @@ describe("macOS microphone bundle contract", () => {
     );
     expect(rustEntryPoint).toMatch(/app\.set_dock_visibility\(false\)/);
   });
+
+  it("keeps an in-app quit path when the Dock icon is hidden", async () => {
+    const rustEntryPoint = await readFile(`${tauriDir}/src/lib.rs`, "utf8");
+
+    expect(rustEntryPoint).toMatch(/fn quit_app\(app: tauri::AppHandle\)/);
+    expect(rustEntryPoint).toMatch(/app\.exit\(0\)/);
+    expect(rustEntryPoint).toMatch(/add_todo_to_apple_reminders,\s*quit_app,/);
+  });
 });

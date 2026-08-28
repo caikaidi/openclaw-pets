@@ -20,6 +20,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import PetCanvas from "./components/PetCanvas.vue";
 import SpritePet from "./components/SpritePet.vue";
 import { BatchRecorder } from "./runtime/batch-recorder.js";
+import { quitApp } from "./runtime/app-lifecycle.js";
 import {
   activityGapMessage,
   activitySourceLabel,
@@ -647,6 +648,14 @@ async function forgetConnectionCredential(): Promise<void> {
   showTransient("已移除连接凭据");
 }
 
+async function quitApplication(): Promise<void> {
+  try {
+    await quitApp();
+  } catch (cause) {
+    showTransient(readableError(cause), 5_000);
+  }
+}
+
 let pointerStart: { x: number; y: number } | undefined;
 let dragging = false;
 function onPetPointerDown(event: PointerEvent): void {
@@ -693,7 +702,7 @@ onMounted(() => {
   if (!connectionConfigured) return;
   gateway = new PetsGatewayClient({
     url: gatewayUrl.value,
-    appVersion: "0.5.0",
+    appVersion: "0.5.1",
     onStateChange: (state, message) => {
       connection.value = state;
       detail.value = message ?? "";
@@ -861,6 +870,9 @@ onBeforeUnmount(() => {
         <div class="settings-actions">
           <button class="secondary" @click="forgetConnectionCredential">移除连接凭据</button>
           <button class="primary" @click="saveConnection">保存并重连</button>
+        </div>
+        <div class="app-actions">
+          <button class="secondary danger quit-app" @click="quitApplication">退出 OpenClaw Pets</button>
         </div>
       </div>
     </section>
