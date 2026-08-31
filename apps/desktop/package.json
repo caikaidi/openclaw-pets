@@ -1,6 +1,6 @@
 {
   "name": "@openclaw-pets/desktop",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Native macOS desktop companion for OpenClaw Pets",
   "private": true,
   "type": "module",

@@ -141,7 +141,9 @@ The desktop requests the recent 30 complete local calendar dates through
 time, and the user's time zone to a direct completion with tools, execution,
 delivery, and reasoning disabled. Model output is accepted only when every
 Todo cites exact observation ids from that window. Todo is derived UI, not a
-second persistence store, and regenerating it reads the Journal again.
+second persistence store. The plugin keeps one process-local summary keyed by
+the bounded Journal snapshot; an unchanged snapshot skips the model call, and
+an explicit force request bypasses the cache.
 
 The macOS companion exports one selected Todo at a time through fixed
 AppleScript programs whose user content is passed as arguments rather than

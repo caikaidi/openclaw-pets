@@ -276,7 +276,7 @@ async function refreshActivities(append = false): Promise<void> {
   }
 }
 
-async function refreshTodos(): Promise<void> {
+async function refreshTodos(force = false): Promise<void> {
   if (todoLoading.value) return;
   if (!gateway?.connected || !pluginAvailable.value) {
     todoWarning.value = "OpenClaw Pets 插件尚未连接";
@@ -292,6 +292,7 @@ async function refreshTodos(): Promise<void> {
     const response = await gateway.request<TodoSummary>(PETS_RPC.todoGenerate, {
       ...recentTodoWindow(),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...(force ? { force: true } : {}),
     });
     todos.value = response.todos;
     todoGeneratedAt.value = response.generatedAt;
@@ -702,7 +703,7 @@ onMounted(() => {
   if (!connectionConfigured) return;
   gateway = new PetsGatewayClient({
     url: gatewayUrl.value,
-    appVersion: "0.5.2",
+    appVersion: "0.5.3",
     onStateChange: (state, message) => {
       connection.value = state;
       detail.value = message ?? "";
@@ -772,7 +773,7 @@ onBeforeUnmount(() => {
               {{ todoObservationsRead }} 条来源 · {{ new Date(todoGeneratedAt).toLocaleTimeString() }} 更新
             </small>
           </div>
-          <button class="secondary" :disabled="todoLoading" @click="refreshTodos">
+          <button class="secondary" :disabled="todoLoading" @click="refreshTodos(true)">
             {{ todoLoading ? "总结中…" : "重新总结" }}
           </button>
         </div>

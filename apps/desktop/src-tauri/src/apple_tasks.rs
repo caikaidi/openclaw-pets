@@ -76,7 +76,7 @@ on run argv
   tell application "Reminders"
     set targetList to default list
     if hasDueDate is "1" then
-      set dueDate to configuredDate((item 4 of argv) as integer, (item 5 of argv) as integer, (item 6 of argv) as integer, (item 7 of argv) as integer, (item 8 of argv) as integer)
+      set dueDate to my configuredDate((item 4 of argv) as integer, (item 5 of argv) as integer, (item 6 of argv) as integer, (item 7 of argv) as integer, (item 8 of argv) as integer)
       tell targetList to make new reminder at end of reminders with properties {name:reminderTitle, body:reminderNotes, due date:dueDate}
     else
       tell targetList to make new reminder at end of reminders with properties {name:reminderTitle, body:reminderNotes}
@@ -137,10 +137,18 @@ fn run_osascript(script: &str, arguments: &[String], app_name: &str) -> Result<(
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "Could not add this todo to Apple {app_name}. Allow OpenClaw Pets in System Settings > Privacy & Security > Automation."
-        ))
+        Err(automation_error(&output.stderr, app_name))
     }
+}
+
+fn automation_error(stderr: &[u8], app_name: &str) -> String {
+    let diagnostic = String::from_utf8_lossy(stderr);
+    if diagnostic.contains("(-1743)") || diagnostic.contains("not authorized") {
+        return format!(
+            "Could not add this todo to Apple {app_name}. Allow OpenClaw Pets in System Settings > Privacy & Security > Automation."
+        );
+    }
+    format!("Apple {app_name} rejected this todo. Please try again.")
 }
 
 pub fn add_to_calendar(input: CalendarTodoInput) -> Result<(), String> {
@@ -204,6 +212,10 @@ mod tests {
                 .expect("AppleScript compiler");
             assert!(status.success(), "Apple automation script must compile");
         }
+        assert!(
+            REMINDERS_SCRIPT.contains("set dueDate to my configuredDate("),
+            "the Reminders tell block must call the local date handler explicitly"
+        );
     }
 
     #[test]
@@ -222,5 +234,17 @@ mod tests {
             hour: 9,
             minute: 0,
         }));
+    }
+
+    #[test]
+    fn reports_automation_guidance_only_for_a_permission_denial() {
+        assert!(
+            automation_error(b"execution error: Not authorized (-1743)", "Reminders")
+                .contains("Privacy & Security > Automation")
+        );
+        assert_eq!(
+            automation_error(b"configuredDate cannot continue (-1708)", "Reminders"),
+            "Apple Reminders rejected this todo. Please try again."
+        );
     }
 }

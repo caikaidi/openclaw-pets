@@ -400,11 +400,12 @@ describe("OpenClaw Pets plugin", () => {
       await request(methods, "pets.activity.append", { observation });
     }
 
-    expect(await request(methods, "pets.todo.generate", {
+    const requestParams = {
       startAt: "2026-08-28T00:00:00.000Z",
       endAt: "2026-08-29T00:00:00.000Z",
       timeZone: "Asia/Shanghai",
-    })).toMatchObject({
+    };
+    expect(await request(methods, "pets.todo.generate", requestParams)).toMatchObject({
       ok: true,
       payload: {
         status: "ok",
@@ -413,6 +414,41 @@ describe("OpenClaw Pets plugin", () => {
       },
     });
     expect(summarized).toEqual([["inside-window"]]);
+
+    await request(methods, "pets.todo.generate", requestParams);
+    expect(summarized).toEqual([["inside-window"]]);
+
+    await request(methods, "pets.activity.append", {
+      observation: {
+        id: "inside-window-new",
+        occurredAt: "2026-08-28T04:00:00.000Z",
+        source: "text",
+        text: "补充新的测试结论",
+      },
+    });
+    await request(methods, "pets.todo.generate", requestParams);
+    expect(summarized).toHaveLength(2);
+    expect(summarized[1]).toEqual(expect.arrayContaining(["inside-window", "inside-window-new"]));
+
+    await request(methods, "pets.todo.generate", { ...requestParams, force: true });
+    expect(summarized).toHaveLength(3);
+
+    const listed = await request(methods, "pets.activity.list", { limit: 10 });
+    const newObservation = (listed?.payload as {
+      observations: Array<{ id: string; revision: string }>;
+    }).observations.find((item) => item.id === "inside-window-new");
+    await request(methods, "pets.activity.update", {
+      id: "inside-window-new",
+      text: "修订后的新测试结论",
+      expectedRevision: newObservation?.revision,
+    });
+    await request(methods, "pets.todo.generate", requestParams);
+    expect(summarized).toHaveLength(4);
+
+    await request(methods, "pets.activity.delete", { id: "inside-window-new" });
+    await request(methods, "pets.todo.generate", requestParams);
+    expect(summarized).toHaveLength(5);
+    expect(summarized[4]).toEqual(["inside-window"]);
   });
 
   it("binds ambient Todo completion to the configured agent and isolated runtime", async () => {

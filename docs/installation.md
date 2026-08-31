@@ -1,6 +1,7 @@
 # Source installation
 
-OpenClaw Pets desktop `0.5.2` with Gateway plugin `0.5.2` is a public beta.
+OpenClaw Pets desktop `0.5.3` with Gateway plugin `0.5.3` is a public beta.
+Desktop and plugin versions are independent; both changed in this release.
 Install both from one clean source checkout. Official notarized macOS binaries
 are not published yet.
 
@@ -27,7 +28,7 @@ npm pack --pack-destination ../../dist
 Install the resulting archive with OpenClaw's local package installer:
 
 ```bash
-openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.5.2.tgz
+openclaw plugins install npm-pack:/absolute/path/to/openclaw-pets/dist/openclaw-pets-plugin-0.5.3.tgz
 ```
 
 Configure ASR, routing, and the Journal Provider through the OpenClaw plugin
@@ -65,7 +66,7 @@ On first launch:
 3. allow microphone access when macOS asks;
 4. install a licensed Pet Pack, or use the built-in CSS fallback pet.
 
-Desktop `0.5.2` migrates older per-key Keychain entries into one process-cached
+Desktop `0.5.2` and later migrate older per-key Keychain entries into one process-cached
 credential vault. The legacy entries are retained as recovery copies. A build
 that was signed by an older development identity may therefore ask for one-time
 access to the device key and current device token during migration. The app

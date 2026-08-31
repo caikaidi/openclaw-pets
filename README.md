@@ -10,7 +10,8 @@ This repository is a **greenfield rewrite**. It does not fork or depend on the
 earlier desktop-pet repository used during product discovery, and it does not
 include privately evaluated discovery artwork.
 
-> Status: desktop `0.5.2` with Gateway plugin `0.5.2` public beta. Source
+> Status: desktop `0.5.3` with Gateway plugin `0.5.3` public beta. Component
+> versions are independent; both changed in this release. Source
 > builds are supported. Official notarized macOS binaries and automated
 > release publishing are not available yet.
 

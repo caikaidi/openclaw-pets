@@ -1,6 +1,6 @@
 {
   "name": "openclaw-pets",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Native desktop pets, voice input, and explicit context for OpenClaw",
   "private": true,
   "type": "module",
