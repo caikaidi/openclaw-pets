@@ -4,7 +4,6 @@ use base64::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 use image::{ImageFormat, ImageReader, Limits};
-use keyring::{error::Error as KeyringError, Entry};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,11 +16,9 @@ use walkdir::WalkDir;
 
 mod apple_tasks;
 mod pet_packs;
+mod secure_store;
 
-const KEYRING_SERVICE: &str = "dev.openclaw.pets";
 const DEVICE_KEY: &str = "device-signing-key-v2";
-const MAX_KEY_LENGTH: usize = 1_024;
-const MAX_VALUE_LENGTH: usize = 65_536;
 const MAX_SIGNING_PAYLOAD_LENGTH: usize = 16_384;
 const MAX_PACK_MANIFEST_LENGTH: u64 = 65_536;
 const MAX_PACK_ASSET_LENGTH: u64 = 16 * 1024 * 1024;
@@ -64,37 +61,8 @@ struct NativePackAsset {
     height: u32,
 }
 
-fn validate_key(key: &str) -> Result<(), String> {
-    if key.is_empty() || key.len() > MAX_KEY_LENGTH || key.chars().any(char::is_control) {
-        return Err("invalid secure storage key".into());
-    }
-    Ok(())
-}
-
-fn entry(key: &str) -> Result<Entry, String> {
-    validate_key(key)?;
-    Entry::new(KEYRING_SERVICE, key).map_err(|_| "secure storage is unavailable".into())
-}
-
-fn read_secret(key: &str) -> Result<Option<String>, String> {
-    match entry(key)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(_) => Err("secure storage read failed".into()),
-    }
-}
-
-fn write_secret(key: &str, value: &str) -> Result<(), String> {
-    if value.len() > MAX_VALUE_LENGTH {
-        return Err("secure storage value is too large".into());
-    }
-    entry(key)?
-        .set_password(value)
-        .map_err(|_| "secure storage write failed".into())
-}
-
 fn signing_key() -> Result<SigningKey, String> {
-    if let Some(encoded) = read_secret(DEVICE_KEY)? {
+    if let Some(encoded) = secure_store::read_secret(DEVICE_KEY)? {
         let bytes = URL_SAFE_NO_PAD
             .decode(encoded)
             .map_err(|_| "stored device identity is invalid".to_string())?;
@@ -105,7 +73,7 @@ fn signing_key() -> Result<SigningKey, String> {
     }
 
     let key = SigningKey::generate(&mut OsRng);
-    write_secret(DEVICE_KEY, &URL_SAFE_NO_PAD.encode(key.to_bytes()))?;
+    secure_store::write_secret(DEVICE_KEY, &URL_SAFE_NO_PAD.encode(key.to_bytes()))?;
     Ok(key)
 }
 
@@ -131,20 +99,17 @@ fn sign_device_payload(payload: String) -> Result<String, String> {
 
 #[tauri::command]
 fn secure_get(key: String) -> Result<Option<String>, String> {
-    read_secret(&key)
+    secure_store::read_secret(&key)
 }
 
 #[tauri::command]
 fn secure_set(key: String, value: String) -> Result<(), String> {
-    write_secret(&key, &value)
+    secure_store::write_secret(&key, &value)
 }
 
 #[tauri::command]
 fn secure_delete(key: String) -> Result<(), String> {
-    match entry(&key)?.delete_credential() {
-        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-        Err(_) => Err("secure storage delete failed".into()),
-    }
+    secure_store::tombstone_secret(&key)
 }
 
 #[tauri::command]

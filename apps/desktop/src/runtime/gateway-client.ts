@@ -22,6 +22,7 @@ import {
   loadDeviceIdentity,
   readConnectionCredential,
 } from "./secure-store.js";
+import type { SecureStoreRuntime } from "./secure-store.js";
 
 export type GatewayConnectionState = "disconnected" | "connecting" | "connected" | "pairing" | "error";
 
@@ -35,6 +36,13 @@ export type PetsGatewayClientOptions = {
 
 type PetsGatewayAuthPlan = GatewayBrowserDeviceAuthPlan & {
   usedConnectionCredential: boolean;
+};
+
+type PetsGatewayRuntime = Pick<
+  SecureStoreRuntime,
+  "loadDeviceIdentity" | "readConnectionCredential" | "createDeviceTokenStore"
+> & {
+  createSocket: typeof createBrowserSocket;
 };
 
 export const gatewayRequestedScopes = ["operator.read", "operator.write"] as const;
@@ -100,19 +108,32 @@ function connectionDetail(error: unknown): string {
 export class PetsGatewayClient {
   private readonly auth: GatewayBrowserDeviceAuthLifecycle;
   private readonly client: GatewayProtocolClient<PetsGatewayAuthPlan>;
+  private readonly clientInfo: GatewayClientInfo;
+  private readonly tokenStore: ReturnType<typeof createDeviceTokenStore>;
   private state: GatewayConnectionState = "disconnected";
+  private startPromise: Promise<void> | undefined;
 
-  constructor(private readonly options: PetsGatewayClientOptions) {
+  constructor(
+    private readonly options: PetsGatewayClientOptions,
+    private readonly runtime: PetsGatewayRuntime = {
+      loadDeviceIdentity,
+      readConnectionCredential,
+      createDeviceTokenStore,
+      createSocket: createBrowserSocket,
+    },
+  ) {
     const clientInfo = gatewayClientInfo(options.appVersion, navigator.platform || "macos");
+    this.clientInfo = clientInfo;
+    this.tokenStore = runtime.createDeviceTokenStore(options.url);
     this.auth = new GatewayBrowserDeviceAuthLifecycle({
-      loadIdentity: async () => loadDeviceIdentity(),
-      tokenStore: createDeviceTokenStore(options.url),
+      loadIdentity: async () => runtime.loadDeviceIdentity(),
+      tokenStore: this.tokenStore,
     });
     this.client = new GatewayProtocolClient<PetsGatewayAuthPlan>({
-      createSocket: (handlers) => createBrowserSocket(options.url, handlers),
+      createSocket: (handlers) => runtime.createSocket(options.url, handlers),
       createRequestId: () => crypto.randomUUID(),
       buildConnectPlan: async ({ nonce, challengeTs }) => {
-        const connectionToken = (await readConnectionCredential(options.url)) ?? undefined;
+        const connectionToken = (await runtime.readConnectionCredential(options.url)) ?? undefined;
         const plan = await this.auth.buildPlan({
           client: clientInfo,
           role: "operator",
@@ -187,9 +208,17 @@ export class PetsGatewayClient {
     });
   }
 
-  start(): void {
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
     this.setState("connecting");
-    this.client.start();
+    const start = this.prepareSecureStore()
+      .then(() => this.client.start())
+      .catch((error: unknown) => this.setState("error", connectionDetail(error)))
+      .finally(() => {
+        if (this.startPromise === start) this.startPromise = undefined;
+      });
+    this.startPromise = start;
+    return start;
   }
 
   stop(): void {
@@ -197,10 +226,9 @@ export class PetsGatewayClient {
     this.setState("disconnected");
   }
 
-  reconnect(): void {
+  async reconnect(): Promise<void> {
     this.client.stop();
-    this.setState("connecting");
-    this.client.start();
+    await this.start();
   }
 
   request<T>(
@@ -213,6 +241,16 @@ export class PetsGatewayClient {
 
   get connected(): boolean {
     return this.client.connected;
+  }
+
+  private async prepareSecureStore(): Promise<void> {
+    const identity = await this.runtime.loadDeviceIdentity();
+    await this.runtime.readConnectionCredential(this.options.url);
+    await this.tokenStore.load({
+      clientId: this.clientInfo.id,
+      deviceId: identity.deviceId,
+      role: "operator",
+    });
   }
 
   private setState(state: GatewayConnectionState, detail?: string): void {

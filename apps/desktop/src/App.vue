@@ -702,7 +702,7 @@ onMounted(() => {
   if (!connectionConfigured) return;
   gateway = new PetsGatewayClient({
     url: gatewayUrl.value,
-    appVersion: "0.5.1",
+    appVersion: "0.5.2",
     onStateChange: (state, message) => {
       connection.value = state;
       detail.value = message ?? "";

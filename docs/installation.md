@@ -1,6 +1,6 @@
 # Source installation
 
-OpenClaw Pets desktop `0.5.1` with Gateway plugin `0.5.2` is a public beta.
+OpenClaw Pets desktop `0.5.2` with Gateway plugin `0.5.2` is a public beta.
 Install both from one clean source checkout. Official notarized macOS binaries
 are not published yet.
 
@@ -64,6 +64,13 @@ On first launch:
 2. approve the new device in OpenClaw;
 3. allow microphone access when macOS asks;
 4. install a licensed Pet Pack, or use the built-in CSS fallback pet.
+
+Desktop `0.5.2` migrates older per-key Keychain entries into one process-cached
+credential vault. The legacy entries are retained as recovery copies. A build
+that was signed by an older development identity may therefore ask for one-time
+access to the device key and current device token during migration. The app
+finishes this secure-storage preflight before opening its Gateway socket, so a
+pending system authorization dialog cannot start a reconnect loop.
 
 Each additional computer repeats pairing with its own device identity. Use an
 authenticated `wss://` Gateway address when connecting remotely. Pet Pack
