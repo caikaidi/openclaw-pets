@@ -404,6 +404,7 @@ describe("OpenClaw Pets plugin", () => {
       startAt: "2026-08-28T00:00:00.000Z",
       endAt: "2026-08-29T00:00:00.000Z",
       timeZone: "Asia/Shanghai",
+      force: false,
     };
     expect(await request(methods, "pets.todo.generate", requestParams)).toMatchObject({
       ok: true,
@@ -439,7 +440,7 @@ describe("OpenClaw Pets plugin", () => {
     }).observations.find((item) => item.id === "inside-window-new");
     await request(methods, "pets.activity.update", {
       id: "inside-window-new",
-      text: "修订后的新测试结论",
+      text: "补充新的测试结论",
       expectedRevision: newObservation?.revision,
     });
     await request(methods, "pets.todo.generate", requestParams);
@@ -449,6 +450,13 @@ describe("OpenClaw Pets plugin", () => {
     await request(methods, "pets.todo.generate", requestParams);
     expect(summarized).toHaveLength(5);
     expect(summarized[4]).toEqual(["inside-window"]);
+
+    await request(methods, "pets.todo.generate", {
+      startAt: requestParams.startAt,
+      endAt: requestParams.endAt,
+      timeZone: requestParams.timeZone,
+    });
+    expect(summarized).toHaveLength(6);
   });
 
   it("binds ambient Todo completion to the configured agent and isolated runtime", async () => {

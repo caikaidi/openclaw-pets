@@ -86,7 +86,13 @@ function todoSnapshot(input: {
       left.source.localeCompare(right.source) || left.reason.localeCompare(right.reason)),
     observations: [...input.observations]
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
-      .map(({ id, occurredAt, text }) => ({ id, occurredAt, text })),
+      .map(({ id, occurredAt, text, editedAt, revision }) => ({
+        id,
+        occurredAt,
+        text,
+        ...(editedAt ? { editedAt } : {}),
+        ...(revision ? { revision } : {}),
+      })),
   });
 }
 
@@ -359,7 +365,7 @@ export function registerOpenClawPets(
       ? Date.parse(params.endAt)
       : Number.NaN;
     const timeZone = typeof params.timeZone === "string" ? params.timeZone.trim() : "";
-    const force = params.force === true;
+    const force = params.force !== false;
     let validTimeZone = false;
     try {
       validTimeZone = timeZone.length > 0 && timeZone.length <= 128

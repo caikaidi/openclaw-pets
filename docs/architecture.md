@@ -143,7 +143,9 @@ delivery, and reasoning disabled. Model output is accepted only when every
 Todo cites exact observation ids from that window. Todo is derived UI, not a
 second persistence store. The plugin keeps one process-local summary keyed by
 the bounded Journal snapshot; an unchanged snapshot skips the model call, and
-an explicit force request bypasses the cache.
+an explicit force request bypasses the cache. Cache-aware clients send
+`force: false` for passive entry; omitting the field preserves legacy forced
+regeneration for older clients.
 
 The macOS companion exports one selected Todo at a time through fixed
 AppleScript programs whose user content is passed as arguments rather than

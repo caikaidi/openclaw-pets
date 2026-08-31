@@ -292,7 +292,7 @@ async function refreshTodos(force = false): Promise<void> {
     const response = await gateway.request<TodoSummary>(PETS_RPC.todoGenerate, {
       ...recentTodoWindow(),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      ...(force ? { force: true } : {}),
+      force,
     });
     todos.value = response.todos;
     todoGeneratedAt.value = response.generatedAt;
