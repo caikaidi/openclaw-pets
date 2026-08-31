@@ -39,15 +39,19 @@ impl KeyringBackend {
     fn entry(service: &str, account: &str) -> Result<Entry, String> {
         Entry::new(service, account).map_err(|_| "secure storage is unavailable".into())
     }
-}
 
-impl SecretBackend for KeyringBackend {
-    fn read_vault(&self) -> Result<Option<String>, String> {
-        match Self::entry(VAULT_SERVICE, VAULT_ACCOUNT)?.get_password() {
+    fn read_entry(service: &str, account: &str) -> Result<Option<String>, String> {
+        match Self::entry(service, account)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(KeyringError::NoEntry) => Ok(None),
             Err(_) => Err("secure storage read failed".into()),
         }
+    }
+}
+
+impl SecretBackend for KeyringBackend {
+    fn read_vault(&self) -> Result<Option<String>, String> {
+        Self::read_entry(VAULT_SERVICE, VAULT_ACCOUNT)
     }
 
     fn write_vault(&self, value: &str) -> Result<(), String> {
@@ -57,11 +61,7 @@ impl SecretBackend for KeyringBackend {
     }
 
     fn read_legacy(&self, account: &str) -> Result<Option<String>, String> {
-        match Self::entry(LEGACY_SERVICE, account)?.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(KeyringError::NoEntry) => Ok(None),
-            Err(_) => Err("secure storage read failed".into()),
-        }
+        Self::read_entry(LEGACY_SERVICE, account)
     }
 }
 

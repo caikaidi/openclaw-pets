@@ -18,7 +18,7 @@
     "typecheck": "corepack pnpm --filter @openclaw-pets/protocol build && corepack pnpm --filter @openclaw-pets/petpack build && vue-tsc --noEmit",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build && sh ../../scripts/verify-macos-signature.sh 'src-tauri/target/release/bundle/macos/OpenClaw Pets.app'"
   },
   "dependencies": {
     "@openclaw-pets/petpack": "workspace:*",

@@ -18,11 +18,15 @@ The verifier pins the Bundle ID, Team ID, and a hash of the approved signing
 authority name without publishing that name. A certificate renewal that keeps
 the same authority name remains compatible; changing the Team or authority is
 a credential migration event, not a routine rebuild. Local production builds
-must run the fail-closed verifier after bundling:
+must use the release command, which bundles the app and then runs the
+fail-closed verifier automatically:
 
 ```bash
-corepack pnpm verify:macos-signature
+corepack pnpm release:macos
 ```
+
+The desktop `tauri:build` script has the same mandatory verifier. A raw
+`tauri build` is only a development command and must not be distributed.
 
 If the approved signer must change, ship an explicit versioned vault migration
 and retain the previous vault as a recovery copy before updating the verifier.

@@ -112,6 +112,7 @@ export class PetsGatewayClient {
   private readonly tokenStore: ReturnType<typeof createDeviceTokenStore>;
   private state: GatewayConnectionState = "disconnected";
   private startPromise: Promise<void> | undefined;
+  private shouldRun = false;
 
   constructor(
     private readonly options: PetsGatewayClientOptions,
@@ -209,11 +210,16 @@ export class PetsGatewayClient {
   }
 
   start(): Promise<void> {
+    this.shouldRun = true;
     if (this.startPromise) return this.startPromise;
     this.setState("connecting");
     const start = this.prepareSecureStore()
-      .then(() => this.client.start())
-      .catch((error: unknown) => this.setState("error", connectionDetail(error)))
+      .then(() => {
+        if (this.shouldRun) this.client.start();
+      })
+      .catch((error: unknown) => {
+        if (this.shouldRun) this.setState("error", connectionDetail(error));
+      })
       .finally(() => {
         if (this.startPromise === start) this.startPromise = undefined;
       });
@@ -222,12 +228,13 @@ export class PetsGatewayClient {
   }
 
   stop(): void {
+    this.shouldRun = false;
     this.client.stop();
     this.setState("disconnected");
   }
 
   async reconnect(): Promise<void> {
-    this.client.stop();
+    this.stop();
     await this.start();
   }
 

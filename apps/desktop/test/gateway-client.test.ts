@@ -97,4 +97,43 @@ describe("OpenClaw Pets Gateway identity", () => {
     expect(socketCreations).toBe(0);
     expect(states.at(-1)).toEqual(["error", "secure storage authorization required"]);
   });
+
+  it("does not open a WebSocket when stopped during secure storage preflight", async () => {
+    let resolveIdentity: ((value: { deviceId: string; publicKey: string; sign: () => Promise<string> }) => void) | undefined;
+    const identity = new Promise<{ deviceId: string; publicKey: string; sign: () => Promise<string> }>((resolve) => {
+      resolveIdentity = resolve;
+    });
+    let socketCreations = 0;
+    const states: string[] = [];
+    const client = new PetsGatewayClient({
+      url: "ws://127.0.0.1:18789/",
+      appVersion: "0.5.2",
+      onStateChange: (state) => states.push(state),
+    }, {
+      loadDeviceIdentity: async () => identity,
+      readConnectionCredential: async () => null,
+      createDeviceTokenStore: () => ({
+        load: async () => null,
+        store: async () => undefined,
+        clear: async () => undefined,
+      }),
+      createSocket: () => {
+        socketCreations += 1;
+        return { isOpen: () => false, send: () => undefined, close: () => undefined };
+      },
+    });
+
+    const started = client.start();
+    await Promise.resolve();
+    client.stop();
+    resolveIdentity?.({
+      deviceId: "a".repeat(64),
+      publicKey: "public",
+      sign: async () => "signature",
+    });
+    await started;
+
+    expect(socketCreations).toBe(0);
+    expect(states.at(-1)).toBe("disconnected");
+  });
 });
