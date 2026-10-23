@@ -16,6 +16,7 @@ import {
   type GatewayClientInfo,
 } from "@openclaw/gateway-protocol/client-info";
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version";
+import { PETS_RPC } from "@openclaw-pets/protocol";
 import {
   clearConnectionCredential,
   createDeviceTokenStore,
@@ -243,6 +244,11 @@ export class PetsGatewayClient {
     params: Record<string, unknown> = {},
     options?: GatewayProtocolRequestOptions,
   ): Promise<T> {
+    // Todo can read five Journal pages (up to 30s each), then summarize for
+    // 60s. Keep 30s transport headroom without extending ordinary RPCs.
+    if (method === PETS_RPC.todoGenerate && options?.timeoutMs === undefined) {
+      return this.client.request<T>(method, params, { ...options, timeoutMs: 240_000 });
+    }
     return this.client.request<T>(method, params, options);
   }
 

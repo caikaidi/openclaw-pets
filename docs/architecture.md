@@ -74,8 +74,8 @@ projects only those sessions; WebChat, cron, and other Agent runs cannot move
 the pet out of idle. The desktop gives its active interaction higher display
 priority:
 
-1. disconnected → `offline`
-2. local recording → `listening`
+1. authoritative local capture/error → `listening` / `failed`, even offline
+2. disconnected (without local capture/error) → `offline`
 3. plugin batch ASR → `transcribing`
 4. local route confirmation → `needs_input`
 5. matching OpenClaw session → `thinking` or `working`
@@ -97,6 +97,25 @@ separate Gateway devices.
 
 The desktop never receives Provider credentials. It records one compressed
 audio blob and submits it to `pets.transcription.create` after the user stops.
+`BatchRecorder` owns capture state (`idle / starting / recording / stopping /
+error`), elapsed time, and resource-release confirmation. The UI subscribes to
+that state rather than assuming that a stop request has released the microphone.
+Concurrent stop requests share one result even when native recorder state has
+already changed to inactive. Encoding and ASR are distinct from capture; tracks
+are released before encoding completes. A missing stop event times out after
+five seconds and reports an error; failed releases retain tracks for explicit
+recovery. Cancelling a pending permission request releases any eventual stream
+without starting capture. Recovery discards the interrupted audio, never starts
+a new recording, and never persists audio.
+
+The existing context panel exposes capture status, duration, stop and recovery
+controls on all tabs. Dismissing that panel does not stop capture. A native
+window-close request while capture/processing controls are needed keeps the
+window open; explicit application quit remains distinct. A frontend teardown
+releases or cancels capture, and a new instance starts idle. Local stop does
+not depend on Gateway connectivity or ASR availability. Reconnecting cannot
+clear an active capture's interaction id.
+
 The plugin validates MIME type, duration, decoded size, and interaction id,
 then invokes the configured primary ASR Provider. The optional fallback runs
 only after the primary fails.
@@ -158,6 +177,27 @@ The sprite renderer reads the active frame's alpha channel for pointer hit
 testing. Transparent frame padding keeps the normal cursor and cannot start a
 recording, drag, or context menu; the built-in vector pet uses a bounded shape
 target. The native window still grows only when an overlay is present.
+
+Todo edits are local derived revisions persisted through the existing native
+secure vault, not Journal updates or a new backend/API. One versioned, bounded
+record per Gateway stores revisions and export receipts; a successful native
+write precedes UI success. Source identity combines original content and sorted
+source observation IDs, independent of generated ordinal IDs. Unchanged passive
+summaries and App reload retain revisions; explicit generation or changed source
+items replace them. Partial summaries do not delete absent revisions. The current
+protocol does not expose raw Journal revisions in Todo responses. Export receipts
+survive edit/reset; persistence never invokes Apple. Cross-system Apple/receipt
+writes are not atomic. See the v0.5 interaction specification for limits/failures.
+The same revised object reaches the existing Apple export bridge. Journal editing
+retains its Provider revision contract. Both editors share an IME-aware
+Enter/Shift+Enter component with an 80ms unidentified-completion guard, not an
+indefinite confirmation latch.
+
+Focus controls only pet artwork. Native focus and DOM focus are reconciled after
+window-layout transitions, without changing the recording/task state machine.
+The sprite clock excludes unfocused time; built-in CSS animations pause in place.
+Semantic artwork selection waits until regain, while the status UI remains live.
+The brief regain outline is filtered from pet alpha, separate from press scaling.
 
 ## Imported Pet Packs
 

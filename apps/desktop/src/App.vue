@@ -19,6 +19,9 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import PetCanvas from "./components/PetCanvas.vue";
 import SpritePet from "./components/SpritePet.vue";
+import EditTextarea from "./components/EditTextarea.vue";
+import { TodoRevisions } from "./runtime/todo-revisions.js";
+import { observePetFocus } from "./runtime/pet-focus.js";
 import { BatchRecorder } from "./runtime/batch-recorder.js";
 import { quitApp } from "./runtime/app-lifecycle.js";
 import {
@@ -127,7 +130,12 @@ const currentInteractionId = ref<string | undefined>(
 );
 const asrCapability = ref<AsrCapability>({ available: false, health: "unconfigured" });
 const todoAvailable = ref(false);
-const recording = ref(false);
+const recordingSnapshot = ref(recorderInitialState());
+const voiceProcessing = ref(false);
+const petPressed = ref(false);
+function recorderInitialState() {
+  return { phase: "idle", released: true, elapsedMs: 0 } as import("./runtime/batch-recorder.js").RecorderSnapshot;
+}
 const decision = ref<PendingDecision>();
 const panel = ref<PanelTab | undefined>(connectionConfigured ? undefined : "settings");
 const activities = ref<ActivityObservation[]>([]);
@@ -138,6 +146,23 @@ const todoWarning = ref("");
 const todoGeneratedAt = ref<string>();
 const todoObservationsRead = ref(0);
 const todoLoading = ref(false);
+const petFocused = ref(typeof document !== "undefined" && document.hasFocus());
+const petFocusGlow = ref(false);
+let focusGlowTimer: ReturnType<typeof setTimeout> | undefined;
+const editingTodoId = ref<string>();
+const editingTodoTitle = ref("");
+const editingTodoNotes = ref("");
+const todoEditError = ref("");
+const todoSaving = ref(false);
+let todoRevisionGateway = gatewayUrl.value;
+let todoRevisions = new TodoRevisions(todoRevisionGateway);
+function localTodoRevisions(): TodoRevisions {
+  if (todoRevisionGateway !== gatewayUrl.value) {
+    todoRevisionGateway = gatewayUrl.value;
+    todoRevisions = new TodoRevisions(todoRevisionGateway);
+  }
+  return todoRevisions;
+}
 const appleExportBusy = ref<string>();
 const calendarTodoIds = ref(new Set<string>());
 const reminderTodoIds = ref(new Set<string>());
@@ -155,7 +180,13 @@ const petPackBusy = ref(false);
 let transientTimer: number | undefined;
 let interactionTimer: number | undefined;
 let recordingTransition = false;
+let captureInteractionId: string | undefined;
+let recordingClock: number | undefined;
+let unlistenFocus: (() => void) | undefined;
+let unlistenClose: (() => void) | undefined;
+let disposed = false;
 let activityWindow = todayActivityWindow();
+let activityReadVersion = 0;
 
 function setCurrentInteractionId(interactionId?: string): void {
   currentInteractionId.value = interactionId;
@@ -163,12 +194,24 @@ function setCurrentInteractionId(interactionId?: string): void {
   else localStorage.removeItem("openclaw-pets.active-interaction");
 }
 
-const displayState = computed(() => resolveDisplayState({
+const displayState = computed(() => recordingSnapshot.value.phase === "error" ? "failed" : recordingSnapshot.value.phase === "recording" ? "listening" : resolveDisplayState({
   connected: connection.value === "connected",
   backendState: backendState.value,
   ...(interactionState.value ? { interactionState: interactionState.value } : {}),
 }));
-const statusText = computed(() => transientMessage.value || stateLabels[displayState.value]);
+const captureVisible = computed(() => recordingSnapshot.value.phase !== "idle" || voiceProcessing.value);
+const recordingLabel = computed(() => {
+  const snapshot = recordingSnapshot.value;
+  const seconds = Math.floor(snapshot.elapsedMs / 1000);
+  const duration = `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+  if (snapshot.phase === "starting") return "正在请求麦克风…";
+  if (snapshot.phase === "recording") return `采音中 · ${duration}`;
+  if (snapshot.phase === "stopping") return `停止中 · ${duration} · ${snapshot.released ? "麦克风已释放" : "等待释放"}`;
+  if (snapshot.phase === "error") return `录音异常 · ${snapshot.released ? "麦克风已释放" : "释放未确认"}`;
+  if (voiceProcessing.value) return `正在转写/处理 · ${duration} · 麦克风已释放`;
+  return "未录音 · 麦克风已释放";
+});
+const statusText = computed(() => captureVisible.value ? recordingLabel.value : transientMessage.value || stateLabels[displayState.value]);
 const overlay = computed<PetOverlay>(() => {
   if (panel.value) return "panel";
   if (decision.value) return "decision";
@@ -186,13 +229,14 @@ const rootStyle = computed(() => ({
   "--overlay-height": `${renderedLayout.value.overlay?.height ?? 0}px`,
   "--overlay-anchor-x": `${renderedLayout.value.overlayAnchorX ?? 0}px`,
   "--panel-status-left": `${panelStatusCenterX(renderedLayout.value)}px`,
-  "--panel-status-top": `${(renderedLayout.value.overlay?.y ?? 0) + (renderedLayout.value.overlay?.height ?? 0) + 6}px`,
+  "--panel-status-top": `${renderedLayout.value.pet.y - 34}px`,
 }));
 
 // tauri.conf.json always launches at the 33% status layout before Vue restores preferences.
 const windowController = new PetWindowController(33, "status");
 let gateway: PetsGatewayClient | undefined;
 const recorder = new BatchRecorder();
+const unsubscribeRecorder = recorder.subscribe((snapshot) => { recordingSnapshot.value = snapshot; });
 const petPackManager = new PetPackManager();
 const renderedPetPack = computed(() => previewPetPack.value ?? activePetPack.value);
 const renderedPetState = computed(() => previewPetPack.value ? previewPetState.value : displayState.value);
@@ -215,6 +259,7 @@ function showTerminal(state: Extract<InteractionDisplayState, "succeeded" | "fai
   interactionState.value = state;
   if (interactionTimer !== undefined) window.clearTimeout(interactionTimer);
   interactionTimer = window.setTimeout(() => {
+    if (captureVisible.value) return;
     if (interactionState.value === state) interactionState.value = undefined;
     setCurrentInteractionId();
   }, 3_000);
@@ -248,7 +293,7 @@ async function refreshStatus(): Promise<void> {
     });
     pluginAvailable.value = true;
     backendState.value = status.state;
-    if (status.state === "idle" && currentInteractionId.value) setCurrentInteractionId();
+    if (status.state === "idle" && currentInteractionId.value && !captureVisible.value) setCurrentInteractionId();
     if (typeof status.captureEnabled === "boolean") captureEnabled.value = status.captureEnabled;
   } catch {
     pluginAvailable.value = false;
@@ -259,6 +304,7 @@ async function refreshStatus(): Promise<void> {
 
 async function refreshActivities(append = false): Promise<void> {
   if (!gateway?.connected || !pluginAvailable.value) return;
+  const readVersion = ++activityReadVersion;
   try {
     if (!append) activityWindow = todayActivityWindow();
     const response = await gateway.request<ActivityPage>(PETS_RPC.activityList, {
@@ -266,18 +312,21 @@ async function refreshActivities(append = false): Promise<void> {
       ...activityWindow,
       ...(append && activityCursor.value ? { cursor: activityCursor.value } : {}),
     });
+    // A newer read (including a post-mutation refresh) owns the visible page.
+    if (readVersion !== activityReadVersion) return;
     const next = Array.isArray(response.observations) ? response.observations : [];
     activities.value = append ? [...activities.value, ...next] : next;
     activityCursor.value = response.nextCursor;
     activityWarning.value = activityGapMessage(response);
   } catch (cause) {
+    if (readVersion !== activityReadVersion) return;
     activityWarning.value = "流水账暂时无法完整读取";
     showTransient(readableError(cause));
   }
 }
 
 async function refreshTodos(force = false): Promise<void> {
-  if (todoLoading.value) return;
+  if (todoLoading.value || todoSaving.value || appleExportBusy.value) return;
   if (!gateway?.connected || !pluginAvailable.value) {
     todoWarning.value = "OpenClaw Pets 插件尚未连接";
     return;
@@ -294,11 +343,13 @@ async function refreshTodos(force = false): Promise<void> {
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       force,
     });
-    todos.value = response.todos;
+    const revisions = localTodoRevisions();
+    todos.value = await revisions.reconcile(response.todos, force, response.status === "ok" && response.gaps.length === 0);
+    editingTodoId.value = undefined;
     todoGeneratedAt.value = response.generatedAt;
     todoObservationsRead.value = response.observationsRead;
-    calendarTodoIds.value = new Set();
-    reminderTodoIds.value = new Set();
+    calendarTodoIds.value = new Set(todos.value.filter((todo) => revisions.exported(todo, "calendar")).map((todo) => todo.id));
+    reminderTodoIds.value = new Set(todos.value.filter((todo) => revisions.exported(todo, "reminders")).map((todo) => todo.id));
     const reasons = response.gaps.map((gap) => gap.reason).filter(Boolean).join("；");
     if (response.status !== "ok" || response.gaps.length > 0) {
       todoWarning.value = `Todo 可能不完整${reasons ? `：${reasons}` : ""}`;
@@ -316,12 +367,34 @@ function todoDueLabel(todo: TodoItem): string {
   return `未注明时间 · 日历默认 ${suggested.start.toLocaleString()}`;
 }
 
+function beginTodoEdit(todo: TodoItem): void {
+  if (todoLoading.value || todoSaving.value || appleExportBusy.value) return;
+  editingTodoId.value = todo.id;
+  editingTodoTitle.value = todo.title;
+  editingTodoNotes.value = todo.notes ?? "";
+  todoEditError.value = "";
+}
+
+async function saveTodoEdit(todo: TodoItem): Promise<void> {
+  if (editingTodoId.value !== todo.id || todoLoading.value || todoSaving.value || appleExportBusy.value) return;
+  todoSaving.value = true;
+  try {
+    const revised = await localTodoRevisions().save(todo, editingTodoTitle.value, editingTodoNotes.value);
+    todos.value = todos.value.map((item) => item.id === todo.id ? revised : item);
+    editingTodoId.value = undefined;
+    todoEditError.value = "";
+    // Keep export markers: a local edit does not update an existing Apple item.
+  } catch (cause) { todoEditError.value = readableError(cause); }
+  finally { todoSaving.value = false; }
+}
+
 async function exportTodoToCalendar(todo: TodoItem): Promise<void> {
-  if (appleExportBusy.value) return;
+  if (appleExportBusy.value || todoSaving.value || todoLoading.value || calendarTodoIds.value.has(todo.id)) return;
   appleExportBusy.value = `calendar:${todo.id}`;
   try {
     const scheduled = await addTodoToAppleCalendar(todo, new Date(todoGeneratedAt.value ?? Date.now()));
     calendarTodoIds.value = new Set(calendarTodoIds.value).add(todo.id);
+    await localTodoRevisions().markExported(todo, "calendar");
     showTransient(scheduled.inferred ? "已加入 Apple 日历（使用卡片显示的默认时间）" : "已加入 Apple 日历");
   } catch (cause) {
     showTransient(readableError(cause), 5_000);
@@ -331,11 +404,12 @@ async function exportTodoToCalendar(todo: TodoItem): Promise<void> {
 }
 
 async function exportTodoToReminders(todo: TodoItem): Promise<void> {
-  if (appleExportBusy.value) return;
+  if (appleExportBusy.value || todoSaving.value || todoLoading.value || reminderTodoIds.value.has(todo.id)) return;
   appleExportBusy.value = `reminder:${todo.id}`;
   try {
     await addTodoToAppleReminders(todo);
     reminderTodoIds.value = new Set(reminderTodoIds.value).add(todo.id);
+    await localTodoRevisions().markExported(todo, "reminders");
     showTransient("已加入 Apple 提醒事项");
   } catch (cause) {
     showTransient(readableError(cause), 5_000);
@@ -483,11 +557,13 @@ async function updateActivity(observation: ActivityObservation): Promise<void> {
     activities.value = activities.value.map((item) => item.id === updated.id ? updated : item);
     cancelActivityEdit();
     showTransient("流水账已修改");
+    await refreshActivities();
   } catch (cause) {
     if (cause instanceof ActivityEditConflictError) {
       activities.value = activities.value.map((item) => item.id === cause.current.id ? cause.current : item);
       editingActivityText.value = cause.current.text;
       showTransient("这条流水已在另一台电脑修改，请确认最新内容后重试", 5_000);
+      await refreshActivities();
     } else {
       showTransient(readableError(cause));
     }
@@ -503,8 +579,8 @@ function handleGatewayEvent(event: { event: string; payload?: unknown }): void {
     if (isPetSemanticState(payload.state)
       && shouldApplyInteractionStatus(currentInteractionId.value, { interactionId })) {
       backendState.value = payload.state;
-      interactionState.value = undefined;
-      if (payload.state === "idle") setCurrentInteractionId();
+      if (!captureVisible.value) interactionState.value = undefined;
+      if (payload.state === "idle" && !captureVisible.value) setCurrentInteractionId();
     }
   }
 }
@@ -547,9 +623,47 @@ async function dispatchUtterance(transcription: PendingDecision, requestedRoute?
   }
 }
 
+async function recoverRecording(): Promise<void> {
+  await recorder.recover();
+  if (recordingSnapshot.value.released) {
+    captureInteractionId = undefined;
+    interactionState.value = undefined;
+    showTransient("录音已释放；可重新开始（异常片段已丢弃）");
+  }
+}
+
 async function toggleRecording(): Promise<void> {
+  // Local stop/recovery must remain reachable without Gateway or ASR health.
+  const phase = recorder.snapshot.phase;
+  if (phase === "starting" || phase === "error") {
+    await recoverRecording();
+    return;
+  }
+  if (phase === "stopping" || voiceProcessing.value) return;
+  if (phase === "recording") {
+    voiceProcessing.value = true;
+    try {
+      const interactionId = captureInteractionId;
+      const audio = await recorder.stop();
+      if (!interactionId) throw new Error("录音交互已失效，请重新开始");
+      if (!gateway?.connected || connection.value !== "connected") throw new Error("麦克风已释放；连接中断，本次录音未转写");
+      interactionState.value = "transcribing";
+      const result = await transcribeRecording(
+        (method, params, options) => gateway!.request(method, params, options), interactionId, audio,
+      );
+      await refreshCapabilities();
+      await dispatchUtterance({ interactionId, text: result.transcript, provider: result.provider });
+    } catch (cause) {
+      showTerminal("failed");
+      showTransient(readableError(cause), 5_000);
+    } finally {
+      voiceProcessing.value = false;
+      captureInteractionId = undefined;
+    }
+    return;
+  }
   if (recordingTransition) return;
-  if (!gateway?.connected) {
+  if (!gateway?.connected || connection.value !== "connected") {
     showTransient("OpenClaw Gateway 尚未连接");
     return;
   }
@@ -559,32 +673,13 @@ async function toggleRecording(): Promise<void> {
   }
   recordingTransition = true;
   try {
-    if (recording.value) {
-      recording.value = false;
-      interactionState.value = "transcribing";
-      const interactionId = currentInteractionId.value;
-      if (!interactionId) throw new Error("录音交互已失效，请重新开始");
-      const audio = await recorder.stop();
-      const result = await transcribeRecording(
-        (method, params, options) => gateway!.request(method, params, options),
-        interactionId,
-        audio,
-      );
-      await refreshCapabilities();
-      await dispatchUtterance({
-        interactionId,
-        text: result.transcript,
-        provider: result.provider,
-      });
-      return;
-    }
-    setCurrentInteractionId(await createDeviceInteractionId());
-    interactionState.value = "listening";
+    captureInteractionId = await createDeviceInteractionId();
+    if (disposed) return;
+    if (interactionTimer !== undefined) window.clearTimeout(interactionTimer);
+    setCurrentInteractionId(captureInteractionId);
     await recorder.start();
-    recording.value = true;
+    interactionState.value = "listening";
   } catch (cause) {
-    recording.value = false;
-    await refreshCapabilities();
     showTerminal("failed");
     showTransient(readableError(cause), 5_000);
   } finally {
@@ -627,6 +722,10 @@ async function setCapture(enabled: boolean): Promise<void> {
 }
 
 async function saveConnection(): Promise<void> {
+  if (captureVisible.value || recordingTransition) {
+    showTransient("请先停止录音并等待处理完成再重连");
+    return;
+  }
   let nextUrl: string;
   try {
     nextUrl = validateGatewayWebSocketUrl(gatewayDraft.value);
@@ -659,18 +758,27 @@ async function quitApplication(): Promise<void> {
 
 let pointerStart: { x: number; y: number } | undefined;
 let dragging = false;
+let menuDismissEvent: unknown;
 function onPetPointerDown(event: PointerEvent): void {
-  if (event.button !== 0) return;
+  if (event.button !== 0 || event === menuDismissEvent) return;
+  petPressed.value = true;
   pointerStart = { x: event.screenX, y: event.screenY };
   dragging = false;
 }
 function onPetPointerMove(event: PointerEvent): void {
-  if (!pointerStart || dragging || (event.buttons & 1) === 0) return;
+  if (!pointerStart) return;
+  if ((event.buttons & 1) === 0) {
+    onPetPointerCancel();
+    return;
+  }
+  if (dragging) return;
   if (Math.hypot(event.screenX - pointerStart.x, event.screenY - pointerStart.y) < 6) return;
   dragging = true;
-  void windowController.startDragging();
+  petPressed.value = false;
+  void windowController.startDragging().catch(() => onPetPointerCancel());
 }
 function onPetPointerUp(): void {
+  petPressed.value = false;
   const shouldClick = Boolean(pointerStart) && !dragging;
   pointerStart = undefined;
   dragging = false;
@@ -678,8 +786,26 @@ function onPetPointerUp(): void {
 }
 
 function onPetPointerCancel(): void {
+  petPressed.value = false;
   pointerStart = undefined;
   dragging = false;
+}
+
+function onOutsidePointerDown(event: { composedPath(): unknown[] }): void {
+  const inside = event.composedPath().some((node) =>
+    (node as { classList?: { contains(name: string): boolean } })?.classList?.contains("floating-panel"));
+  menuDismissEvent = undefined;
+  if (!inside && panel.value) {
+    menuDismissEvent = event;
+    onPetPointerCancel();
+    closePanel();
+  }
+}
+
+function onWindowBlur(): void {
+  onPetPointerCancel();
+  // Native layout transitions deliberately hide/show the same window.
+  if (!windowController.transitioning) closePanel();
 }
 
 function onPetContextMenu(): void {
@@ -694,6 +820,31 @@ watch([scale, overlay], ([nextScale, nextOverlay]) => {
 });
 
 onMounted(() => {
+  window.addEventListener?.("pointerdown", onOutsidePointerDown, true);
+  window.addEventListener?.("blur", onWindowBlur);
+  recordingClock = window.setInterval(() => { recordingSnapshot.value = recorder.snapshot; }, 250);
+  unlistenFocus = observePetFocus({
+    dom: window,
+    initial: () => petFocused.value,
+    query: () => windowController.isFocused?.() ?? Promise.resolve(petFocused.value),
+    subscribe: (listener) => windowController.onFocusChanged(listener),
+    transitioning: () => windowController.transitioning,
+  }, (focused) => {
+    const regained = focused && !petFocused.value;
+    const lostFocus = !focused && petFocused.value;
+    petFocused.value = focused;
+    if (focusGlowTimer !== undefined) clearTimeout(focusGlowTimer);
+    petFocusGlow.value = regained;
+    if (regained) focusGlowTimer = setTimeout(() => { petFocusGlow.value = false; }, 650);
+    if (lostFocus) onWindowBlur();
+  });
+  void windowController.onCloseRequested(() => {
+    if (!captureVisible.value && !recordingTransition) return false;
+    void openPanel("activity");
+    return true;
+  }).then((unlisten) => {
+    if (disposed) unlisten(); else unlistenClose = unlisten;
+  }).catch(() => undefined);
   void windowController.apply(scale.value, overlay.value, async (nextLayout) => {
     renderedLayout.value = nextLayout;
     await nextTick();
@@ -715,9 +866,17 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
+  window.removeEventListener?.("pointerdown", onOutsidePointerDown, true);
+  window.removeEventListener?.("blur", onWindowBlur);
+  if (recordingClock !== undefined) window.clearInterval(recordingClock);
+  unlistenFocus?.();
+  if (focusGlowTimer !== undefined) clearTimeout(focusGlowTimer);
+  unlistenClose?.();
+  unsubscribeRecorder();
   if (transientTimer !== undefined) window.clearTimeout(transientTimer);
   if (interactionTimer !== undefined) window.clearTimeout(interactionTimer);
-  if (recorder.recording) void recorder.stop().catch(() => undefined);
+  void recorder.recover();
   gateway?.stop();
 });
 </script>
@@ -734,6 +893,13 @@ onBeforeUnmount(() => {
         <button class="icon-button" aria-label="关闭" @click="closePanel">×</button>
       </header>
 
+      <section class="recording-controls" aria-label="录音控制" role="status">
+        <div><strong>{{ recordingLabel }}</strong><small v-if="recordingSnapshot.error">{{ recordingSnapshot.error }}</small></div>
+        <button v-if="recordingSnapshot.phase === 'recording'" class="primary" @click="toggleRecording">停止录音</button>
+        <button v-else-if="recordingSnapshot.phase === 'starting'" @click="recoverRecording">取消启动</button>
+        <button v-else-if="recordingSnapshot.phase === 'stopping' || recordingSnapshot.phase === 'error'" @click="recoverRecording">释放并恢复</button>
+      </section>
+
       <div v-if="panel === 'activity'" class="panel-body activity-list">
         <p v-if="activityWarning" class="activity-warning">{{ activityWarning }}</p>
         <p v-if="activities.length === 0 && !activityWarning" class="empty">今天还没有流水账。</p>
@@ -749,7 +915,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <template v-if="editingActivityId === item.id">
-            <textarea v-model="editingActivityText" class="activity-edit" rows="3" maxlength="8000" />
+            <EditTextarea v-model="editingActivityText" label="编辑流水账" :maxlength="8000" :disabled="Boolean(savingActivityId)" @save="updateActivity(item)" />
+            <small class="edit-hint">Enter 保存 · Shift+Enter 换行</small>
             <div class="activity-edit-actions">
               <button class="secondary" @click="cancelActivityEdit">取消</button>
               <button
@@ -773,7 +940,7 @@ onBeforeUnmount(() => {
               {{ todoObservationsRead }} 条来源 · {{ new Date(todoGeneratedAt).toLocaleTimeString() }} 更新
             </small>
           </div>
-          <button class="secondary" :disabled="todoLoading" @click="refreshTodos(true)">
+          <button class="secondary" :disabled="todoLoading || todoSaving || Boolean(appleExportBusy)" @click="refreshTodos(true)">
             {{ todoLoading ? "总结中…" : "重新总结" }}
           </button>
         </div>
@@ -783,20 +950,31 @@ onBeforeUnmount(() => {
           最近 30 天流水账里没有未完成待办。
         </p>
         <article v-for="todo in todos" :key="todo.id" class="todo-card">
-          <div class="todo-copy">
+          <div v-if="editingTodoId === todo.id" class="todo-copy">
+            <EditTextarea v-model="editingTodoTitle" label="Todo 标题" :disabled="todoSaving" :maxlength="300" @save="saveTodoEdit(todo)" />
+            <EditTextarea v-model="editingTodoNotes" label="Todo 备注" :disabled="todoSaving" :maxlength="8000" @save="saveTodoEdit(todo)" />
+            <small class="edit-hint">Enter 保存 · Shift+Enter 换行；保存在本机，刷新和重开保留。重新总结或来源待办变化后重置，不修改流水账或已导出项目。</small>
+            <p v-if="todoEditError" class="activity-warning" role="alert">{{ todoEditError }}</p>
+            <div class="activity-edit-actions">
+              <button class="secondary" :disabled="todoSaving" @click="editingTodoId = undefined">取消</button>
+              <button class="primary" :disabled="todoSaving" @click="saveTodoEdit(todo)">{{ todoSaving ? "保存中…" : "保存" }}</button>
+            </div>
+          </div>
+          <div v-else class="todo-copy">
             <strong>{{ todo.title }}</strong>
             <p v-if="todo.notes">{{ todo.notes }}</p>
             <small>{{ todoDueLabel(todo) }} · 来源 {{ todo.sourceObservationIds.length }} 条流水</small>
           </div>
           <div class="todo-actions">
+            <button class="secondary" :disabled="todoLoading || todoSaving || Boolean(appleExportBusy)" @click="beginTodoEdit(todo)">编辑</button>
             <button
               class="secondary apple-action"
-              :disabled="Boolean(appleExportBusy) || calendarTodoIds.has(todo.id)"
+              :disabled="todoLoading || todoSaving || Boolean(appleExportBusy) || editingTodoId === todo.id || calendarTodoIds.has(todo.id)"
               @click="exportTodoToCalendar(todo)"
             >{{ calendarTodoIds.has(todo.id) ? "已加入日历" : "加入 Apple 日历" }}</button>
             <button
               class="primary apple-action"
-              :disabled="Boolean(appleExportBusy) || reminderTodoIds.has(todo.id)"
+              :disabled="todoLoading || todoSaving || Boolean(appleExportBusy) || editingTodoId === todo.id || reminderTodoIds.has(todo.id)"
               @click="exportTodoToReminders(todo)"
             >{{ reminderTodoIds.has(todo.id) ? "已加入提醒" : "加入提醒事项" }}</button>
           </div>
@@ -878,7 +1056,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-if="panel && statusText" class="panel-status" role="status">
+    <section v-if="statusText && (panel || captureVisible)" class="panel-status" role="status">
       <span class="state-dot" :data-state="displayState" />
       <strong>{{ statusText }}</strong>
     </section>
@@ -897,7 +1075,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section v-else-if="!panel && statusText" class="status-bubble" role="status">
+    <section v-else-if="!panel && statusText && !captureVisible" class="status-bubble" role="status">
       <span class="state-dot" :data-state="displayState" />
       <div>
         <strong>{{ statusText }}</strong>
@@ -905,11 +1083,12 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div class="pet-hit-area">
+    <div class="pet-hit-area" :class="{ 'pet-pressed': petPressed, 'pet-focus-glow': petFocusGlow }">
       <SpritePet
         v-if="renderedPetPack"
         :state="renderedPetState"
         :pack="renderedPetPack"
+        :paused="!petFocused"
         @pet-pointer-down="onPetPointerDown"
         @pet-pointer-move="onPetPointerMove"
         @pet-pointer-up="onPetPointerUp"
@@ -919,6 +1098,7 @@ onBeforeUnmount(() => {
       <PetCanvas
         v-else
         :state="displayState"
+        :paused="!petFocused"
         @pet-pointer-down="onPetPointerDown"
         @pet-pointer-move="onPetPointerMove"
         @pet-pointer-up="onPetPointerUp"

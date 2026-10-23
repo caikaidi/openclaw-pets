@@ -43,6 +43,29 @@ export async function commitWindowTransition(
 export class PetWindowController {
   private layout: PetWindowLayout;
   private operation: Promise<PetWindowLayout>;
+  private nativeLayoutInitialized = false;
+  transitioning = false;
+  private focusListeners = new Set<(focused: boolean) => void>();
+
+  isFocused(): Promise<boolean> {
+    return isTauri() ? getCurrentWindow().isFocused() : Promise.resolve(typeof document !== "undefined" && document.hasFocus());
+  }
+
+  async onFocusChanged(listener: (focused: boolean) => void): Promise<() => void> {
+    this.focusListeners.add(listener);
+    try {
+      const stop = isTauri()
+        ? await getCurrentWindow().onFocusChanged(({ payload }) => { if (!this.transitioning) listener(payload); })
+        : () => undefined;
+      return () => { this.focusListeners.delete(listener); stop(); };
+    } catch (cause) { this.focusListeners.delete(listener); throw cause; }
+  }
+
+  onCloseRequested(shouldKeepOpen: () => boolean): Promise<() => void> {
+    return isTauri()
+      ? getCurrentWindow().onCloseRequested((event) => { if (shouldKeepOpen()) event.preventDefault(); })
+      : Promise.resolve(() => undefined);
+  }
 
   constructor(scale: PetScale, overlay: PetOverlay) {
     this.layout = layoutFor(scale, overlay);
@@ -67,9 +90,16 @@ export class PetWindowController {
         appWindow.scaleFactor(),
         currentMonitor(),
       ]);
+      // A frontend reload retains the native bounds, not the launch layout.
+      // The pet sits at the window bottom in every layout; recover that anchor
+      // before the first transition instead of adding the launch status headroom.
+      const currentLayout = this.nativeLayoutInitialized ? this.layout : {
+        ...this.layout,
+        pet: { ...this.layout.pet, y: size.height / factor - this.layout.pet.height },
+      };
       const next = repositionForLayout(
         { x: position.x, y: position.y, width: size.width, height: size.height },
-        this.layout,
+        currentLayout,
         nextLayout,
         factor,
         monitor
@@ -81,8 +111,19 @@ export class PetWindowController {
           }
           : undefined,
       );
-      await commitWindowTransition(appWindow, next, factor, commitLayout);
+      this.transitioning = true;
+      try {
+        await commitWindowTransition(appWindow, next, factor, commitLayout);
+      } finally {
+        this.transitioning = false;
+        // hide/show may swallow the final native focus event; reconcile actual focus.
+        try {
+          const focused = await this.isFocused();
+          this.focusListeners.forEach((listener) => listener(focused));
+        } catch { /* DOM focus remains available if the native query fails. */ }
+      }
       this.layout = next.layout;
+      this.nativeLayoutInitialized = true;
       return this.layout;
     });
     return this.operation;

@@ -3,10 +3,11 @@ import { resolvePetAnimation } from "@openclaw-pets/petpack";
 import type { PetSemanticState } from "@openclaw-pets/protocol";
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { animationFrame, spriteStyle } from "../runtime/pet-animation.js";
+import { AnimationClock } from "../runtime/pet-focus.js";
 import type { LoadedPetPack } from "../runtime/pet-pack-loader.js";
 import { isOpaqueSpritePoint, type AlphaBitmap } from "../runtime/sprite-hit-test.js";
 
-const props = defineProps<{ state: PetSemanticState; pack: LoadedPetPack }>();
+const props = defineProps<{ state: PetSemanticState; pack: LoadedPetPack; paused?: boolean }>();
 const emit = defineEmits<{
   petPointerDown: [event: PointerEvent];
   petPointerMove: [event: PointerEvent];
@@ -19,12 +20,13 @@ const root = ref<HTMLElement>();
 const bitmap = shallowRef<AlphaBitmap>();
 const pointerOpaque = ref(false);
 const pointerPressed = ref(false);
-let origin = performance.now();
+const clock = new AnimationClock();
+const visualState = ref(props.state);
 let frameRequest = 0;
 let bitmapRequest = 0;
 let lastPointerEvent: PointerEvent | undefined;
 
-const animation = computed(() => resolvePetAnimation(props.pack.manifest, props.state));
+const animation = computed(() => resolvePetAnimation(props.pack.manifest, visualState.value));
 const asset = computed(() => props.pack.manifest.assets[animation.value.asset]!);
 const assetUrl = computed(() => props.pack.assetUrls[asset.value.path]!);
 const frame = computed(() => animationFrame(animation.value, elapsed.value));
@@ -116,10 +118,13 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 function onPointerLeave(): void {
-  if (!pointerPressed.value) {
-    lastPointerEvent = undefined;
-    pointerOpaque.value = false;
-  }
+  if (pointerPressed.value && lastPointerEvent) cancelPressedPointer(lastPointerEvent);
+  lastPointerEvent = undefined;
+  pointerOpaque.value = false;
+}
+
+function onBlur(): void {
+  onPointerLeave();
 }
 
 function cancelPressedPointer(event: PointerEvent): void {
@@ -142,18 +147,33 @@ function refreshPointerOpacity(): void {
 }
 
 function tick(now: number): void {
-  elapsed.value = now - origin;
+  elapsed.value = clock.tick(now);
   frameRequest = requestAnimationFrame(tick);
 }
 
 watch(animation, () => {
-  origin = performance.now();
+  clock.reset();
   elapsed.value = 0;
+});
+watch(() => props.state, (state) => { if (!props.paused) visualState.value = state; });
+watch(() => props.paused, (paused) => {
+  cancelAnimationFrame(frameRequest);
+  if (paused) { clock.pause(); onBlur(); }
+  else {
+    clock.resume();
+    visualState.value = props.state;
+    frameRequest = requestAnimationFrame(tick);
+  }
 });
 watch(frame, refreshPointerOpacity);
 watch(assetUrl, () => void loadBitmap(), { immediate: true });
-onMounted(() => { frameRequest = requestAnimationFrame(tick); });
+onMounted(() => {
+  if (props.paused) clock.pause();
+  else frameRequest = requestAnimationFrame(tick);
+  window.addEventListener("blur", onBlur);
+});
 onBeforeUnmount(() => {
+  window.removeEventListener("blur", onBlur);
   bitmapRequest += 1;
   cancelAnimationFrame(frameRequest);
 });
@@ -164,13 +184,20 @@ onBeforeUnmount(() => {
     ref="root"
     class="sprite-pet"
     :class="{ 'pointer-opaque': pointerOpaque, 'pointer-pressed': pointerPressed }"
-    :style="style"
+    :style="{ aspectRatio: style.aspectRatio, transform: style.transform }"
     :aria-label="pack.manifest.name"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
+    @lostpointercapture="onPointerCancel"
     @pointerleave="onPointerLeave"
     @contextmenu="onContextMenu"
-  />
+  >
+    <div class="pet-visual sprite-visual" :style="{
+      backgroundImage: style.backgroundImage,
+      backgroundSize: style.backgroundSize,
+      backgroundPosition: style.backgroundPosition,
+    }" />
+  </div>
 </template>
